@@ -68,7 +68,7 @@ export default function LoginPage() {
           style={{ willChange: 'transform, opacity' }}
         >
           <Image
-            src="/image/ParkD_white.png"
+            src="/image/ParkD_White.png"
             alt="ParkD Logo"
             width={160.45}
             height={55.7}
@@ -104,6 +104,23 @@ export default function LoginPage() {
         `}
         style={{ willChange: 'transform, opacity' }}
       >
+        <div
+          className={`
+            md:hidden mb-8
+            transition-all duration-500 ease-out delay-100
+            ${isLoaded ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'}
+          `}
+          style={{ willChange: 'transform, opacity' }}
+        >
+          <Image
+            src="/image/ParkD.png"
+            alt="ParkD Logo"
+            width={140}
+            height={49}
+            priority
+            className="mx-auto"
+          />
+        </div>
         <h2
           className={`
             text-4xl font-bold text-gray-800 mb-8
@@ -232,3 +249,4 @@ export default function LoginPage() {
     </div>
   );
 }
+
