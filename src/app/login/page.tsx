@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Image from 'next/image';
 
 export default function LoginPage() {
   const [formData, setFormData] = useState({
@@ -66,6 +67,18 @@ export default function LoginPage() {
           `}
           style={{ willChange: 'transform, opacity' }}
         >
+          <Image
+            src="/image/ParkD_white.png"
+            alt="ParkD Logo"
+            width={160.45}
+            height={55.7}
+            className={`
+              mx-auto mb-6
+              transition-all duration-500 ease-out
+              ${isLoaded ? 'scale-100 opacity-100' : 'scale-0 opacity-0'}
+            `}
+            style={{ willChange: 'transform, opacity' }}
+          />
           <h1 className="text-5xl font-bold mb-4">Welcome to Park:D</h1>
           <p className="text-lg opacity-90 mb-8">Do not have an account?</p>
           <button
