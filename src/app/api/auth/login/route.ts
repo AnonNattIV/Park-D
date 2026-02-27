@@ -1,76 +1,86 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { RowDataPacket } from 'mysql2';
+import getPool from '@/lib/db/mysql';
+import { generateToken, sanitizeUsername, verifyPassword } from '@/lib/auth';
+import { OwnerRequestStatus, resolveAppRole } from '@/lib/roles';
 
-// TODO: Replace with your actual authentication logic
+interface LoginRow extends RowDataPacket {
+  user_id: number;
+  username: string;
+  email: string;
+  password_hash: string;
+  u_status: 'ACTIVE' | 'INACTIVE' | 'BANNED';
+  owner_request_status: OwnerRequestStatus;
+  roles: string;
+  has_owner_profile: number;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { username, password } = body;
+    const usernameInput = typeof body?.username === 'string' ? sanitizeUsername(body.username) : '';
+    const password = typeof body?.password === 'string' ? body.password : '';
 
-    // ===== OPTION 1: Database with Prisma =====
-    // import { PrismaClient } from '@prisma/client';
-    // const prisma = new PrismaClient();
-    // const user = await prisma.user.findUnique({
-    //   where: { username },
-    //   select: { id: true, username: true, password: true, role: true }
-    // });
-
-    // ===== OPTION 2: PostgreSQL with pg =====
-    // import { Pool } from 'pg';
-    // const pool = new Pool({ /* connection config */ });
-    // const result = await pool.query(
-    //   'SELECT id, username, password, role FROM users WHERE username = $1',
-    //   [username]
-    // );
-
-    // ===== OPTION 3: MongoDB with Mongoose =====
-    // import mongoose from 'mongoose';
-    // import User from '@/models/User';
-    // const user = await User.findOne({ username });
-
-    // ===== OPTION 4: Supabase =====
-    // const { data, error } = await supabase.auth.signInWithPassword({
-    //   email: username,
-    //   password,
-    // });
-
-    // ===== OPTION 5: Firebase Auth =====
-    // const userCredential = await signInWithEmailAndPassword(auth, username, password);
-
-    // ===== DEMO: Mock authentication =====
-    if (!username || !password) {
-      return NextResponse.json(
-        { error: 'Username and password are required' },
-        { status: 400 }
-      );
+    if (!usernameInput || !password) {
+      return NextResponse.json({ error: 'Username and password are required' }, { status: 400 });
     }
 
-    // Mock user lookup (replace with real auth)
-    const mockUser = {
-      id: 'user_123',
-      username: username,
-      role: 'user',
-    };
+    const pool = getPool();
+    const [rows] = await pool.query<LoginRow[]>(
+      `SELECT
+        u.user_id,
+        u.username,
+        u.email,
+        u.password_hash,
+        u.u_status,
+        u.owner_request_status,
+        u.roles,
+        CASE WHEN op.user_id IS NULL THEN 0 ELSE 1 END AS has_owner_profile
+      FROM users u
+      LEFT JOIN owner_profiles op ON op.user_id = u.user_id
+      WHERE u.username = ? OR u.email = ?
+      LIMIT 1`,
+      [usernameInput, usernameInput]
+    );
 
-    // TODO: Verify password using bcrypt
-    // import bcrypt from 'bcryptjs';
-    // const isValid = await bcrypt.compare(password, user.password);
+    if (rows.length === 0) {
+      return NextResponse.json({ error: 'Invalid username/email or password' }, { status: 401 });
+    }
 
-    // TODO: Generate JWT token
-    // import jwt from 'jsonwebtoken';
-    // const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET, {
-    //   expiresIn: '7d',
-    // });
+    const user = rows[0];
+    if (user.u_status !== 'ACTIVE') {
+      return NextResponse.json({ error: 'This account is not active' }, { status: 403 });
+    }
+
+    const passwordValid = await verifyPassword(password, user.password_hash);
+    if (!passwordValid) {
+      return NextResponse.json({ error: 'Invalid username/email or password' }, { status: 401 });
+    }
+
+    const role = resolveAppRole({
+      roles: user.roles,
+      hasOwnerProfile: user.has_owner_profile,
+      ownerRequestStatus: user.owner_request_status,
+    });
+    const token = generateToken({
+      userId: String(user.user_id),
+      username: user.username,
+      role,
+    });
 
     return NextResponse.json({
       success: true,
-      user: mockUser,
-      // token, // Include JWT token in production
+      token,
+      user: {
+        id: user.user_id,
+        username: user.username,
+        email: user.email,
+        role,
+        ownerRequestStatus: user.owner_request_status,
+      },
     });
   } catch (error) {
     console.error('Login error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

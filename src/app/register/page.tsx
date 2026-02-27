@@ -11,6 +11,9 @@ export default function RegisterPage() {
   });
 
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
     setIsLoaded(true);
@@ -18,20 +21,46 @@ export default function RegisterPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage('');
+    setSuccessMessage('');
 
-    // Validation
     if (formData.password !== formData.confirmPassword) {
-      alert('Passwords do not match!');
+      setErrorMessage('Passwords do not match');
       return;
     }
 
     if (formData.password.length < 8) {
-      alert('Password must be at least 8 characters!');
+      setErrorMessage('Password must be at least 8 characters');
       return;
     }
 
-    // TODO: Connect to your registration API
-    console.log('Registration attempt:', formData);
+    try {
+      setIsSubmitting(true);
+
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        setErrorMessage(result.error || 'Registration failed');
+        return;
+      }
+
+      setSuccessMessage('Registration successful. Redirecting to login...');
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 1200);
+    } catch (error) {
+      console.error('Register submit error:', error);
+      setErrorMessage('Unable to connect to server');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleSocialRegister = (provider: string) => {
@@ -70,6 +99,18 @@ export default function RegisterPage() {
           `}
           style={{ willChange: 'transform, opacity' }}
         >
+          {errorMessage && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {errorMessage}
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+              {successMessage}
+            </div>
+          )}
+
           {/* Username Input */}
           <div className="relative group">
             <input
@@ -77,6 +118,7 @@ export default function RegisterPage() {
               placeholder="Username"
               value={formData.username}
               onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              required
               className="w-full px-5 py-4 bg-[#f0f4f8] rounded-xl text-gray-700 placeholder-gray-400
                 focus:outline-none focus:ring-2 focus:ring-[#4a7bff] focus:bg-white
                 focus:shadow-lg
@@ -106,6 +148,7 @@ export default function RegisterPage() {
               placeholder="Email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              required
               className="w-full px-5 py-4 bg-[#f0f4f8] rounded-xl text-gray-700 placeholder-gray-400
                 focus:outline-none focus:ring-2 focus:ring-[#4a7bff] focus:bg-white
                 focus:shadow-lg
@@ -135,6 +178,7 @@ export default function RegisterPage() {
               placeholder="Password"
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              required
               className="w-full px-5 py-4 bg-[#f0f4f8] rounded-xl text-gray-700 placeholder-gray-400
                 focus:outline-none focus:ring-2 focus:ring-[#4a7bff] focus:bg-white
                 focus:shadow-lg
@@ -164,6 +208,7 @@ export default function RegisterPage() {
               placeholder="Confirm Password"
               value={formData.confirmPassword}
               onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+              required
               className="w-full px-5 py-4 bg-[#f0f4f8] rounded-xl text-gray-700 placeholder-gray-400
                 focus:outline-none focus:ring-2 focus:ring-[#4a7bff] focus:bg-white
                 focus:shadow-lg
@@ -189,14 +234,16 @@ export default function RegisterPage() {
           {/* Register Button */}
           <button
             type="submit"
+            disabled={isSubmitting}
             className="w-full py-4 bg-[#4a7bff] text-white font-bold rounded-xl
               hover:bg-[#3a6bef] hover:scale-[1.02] hover:shadow-xl
               active:scale-95
+              disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100
               transition-all duration-300 ease-in-out
             "
             style={{ willChange: 'transform, background-color, box-shadow' }}
           >
-            Register
+            {isSubmitting ? 'Registering...' : 'Register'}
           </button>
         </form>
       </div>

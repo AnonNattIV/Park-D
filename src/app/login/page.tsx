@@ -10,6 +10,14 @@ export default function LoginPage() {
   });
 
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+
+  const getRedirectPathByRole = (role?: string): string => {
+    const normalizedRole = role?.toLowerCase();
+    return normalizedRole === 'admin' ? '/admin' : '/user';
+  };
 
   useEffect(() => {
     setIsLoaded(true);
@@ -17,8 +25,81 @@ export default function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    // TODO: Connect to your authentication API
-    console.log('Login attempt:', formData);
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    if (!formData.username.trim() || !formData.password) {
+      setErrorMessage('Username and password are required');
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+
+      const loginResponse = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
+
+      const loginResult = await loginResponse.json();
+      if (!loginResponse.ok) {
+        setErrorMessage(loginResult.error || 'Login failed');
+        return;
+      }
+
+      const token = loginResult?.token as string | undefined;
+      const userId = loginResult?.user?.id as number | undefined;
+      if (!token || !userId) {
+        setErrorMessage('Login response is invalid');
+        return;
+      }
+
+      localStorage.setItem('auth_token', token);
+      localStorage.setItem('auth_user', JSON.stringify(loginResult.user));
+
+      const directRole = String(loginResult.user?.role || '').toLowerCase();
+      if (directRole === 'admin') {
+        setSuccessMessage('Login successful. Redirecting to /admin...');
+        setTimeout(() => {
+          window.location.href = '/admin';
+        }, 600);
+        return;
+      }
+
+      const userResponse = await fetch(`/api/USER/${userId}`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (userResponse.ok) {
+        const userResult = await userResponse.json();
+        if (userResult?.user) {
+          localStorage.setItem('auth_user', JSON.stringify(userResult.user));
+          const redirectPath = getRedirectPathByRole(userResult.user.role);
+          setSuccessMessage(`Login successful. Redirecting to ${redirectPath}...`);
+          setTimeout(() => {
+            window.location.href = redirectPath;
+          }, 600);
+          return;
+        }
+      }
+
+      const fallbackRedirectPath = getRedirectPathByRole(loginResult.user?.role);
+      setSuccessMessage(`Login successful. Redirecting to ${fallbackRedirectPath}...`);
+      setTimeout(() => {
+        window.location.href = fallbackRedirectPath;
+      }, 600);
+    } catch (error) {
+      console.error('Login submit error:', error);
+      setErrorMessage('Unable to connect to server');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleSocialLogin = (provider: string) => {
@@ -141,6 +222,18 @@ export default function LoginPage() {
           `}
           style={{ willChange: 'transform, opacity' }}
         >
+          {errorMessage && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {errorMessage}
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+              {successMessage}
+            </div>
+          )}
+
           {/* Username Input */}
           <div className="relative group">
             <input
@@ -148,6 +241,7 @@ export default function LoginPage() {
               placeholder="Username"
               value={formData.username}
               onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              required
               className="w-full px-5 py-4 bg-gray-100 rounded-xl text-gray-700 placeholder-gray-400
                 focus:outline-none focus:ring-2 focus:ring-[#5B7CFF] focus:bg-white
                 focus:shadow-lg
@@ -177,6 +271,7 @@ export default function LoginPage() {
               placeholder="Password"
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              required
               className="w-full px-5 py-4 bg-gray-100 rounded-xl text-gray-700 placeholder-gray-400
                 focus:outline-none focus:ring-2 focus:ring-[#5B7CFF] focus:bg-white
                 focus:shadow-lg
@@ -213,14 +308,16 @@ export default function LoginPage() {
           {/* Login Button */}
           <button
             type="submit"
+            disabled={isSubmitting}
             className="w-full py-4 bg-[#5B7CFF] text-white font-bold rounded-xl
               hover:bg-[#4a6bef] hover:scale-[1.02] hover:shadow-xl
               active:scale-95
+              disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100
               transition-all duration-300 ease-in-out
             "
             style={{ willChange: 'transform, background-color, box-shadow' }}
           >
-            Login
+            {isSubmitting ? 'Logging in...' : 'Login'}
           </button>
         </form>
 
