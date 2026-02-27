@@ -1,0 +1,7 @@
+.gitsecret/keys/random_seed
+!*.secret
+.env
+
+node_modules/
+.next/
+out/
