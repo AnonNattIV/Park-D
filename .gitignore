@@ -1,9 +1,45 @@
+# Core secrets
 .gitsecret/keys/random_seed
 !*.secret
 .env
 
-node_modules/
-.next/
-out/
-.env
-.env
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Next.js
+/.next/
+/out/
+
+# Production
+/build
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local env files
+.env*.local
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Claude
+.claude/
+CLAUDE.md
+
+# Assets not committed
+/public/uxui/
