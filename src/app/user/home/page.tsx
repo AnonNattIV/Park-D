@@ -5,8 +5,7 @@ import Tabbar from '@/components/Tabbar';
 
 export default function UserHomePage() {
   const [location, setLocation] = useState('');
-  const [timeRange, setTimeRange] = useState('');
-
+  const [startDateTime, setStartDateTime] = useState('');
   const parkingLots = [
     {
       id: 1,
@@ -86,7 +85,7 @@ export default function UserHomePage() {
                     />
                   </div>
 
-                  {/* Time Range Input */}
+                  {/* Start DateTime Input */}
                   <div className="relative group">
                     <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
                       <svg
@@ -99,16 +98,15 @@ export default function UserHomePage() {
                           strokeLinecap="round"
                           strokeLinejoin="round"
                           strokeWidth={2}
-                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                          d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
                         />
                       </svg>
                     </div>
                     <input
-                      type="text"
-                      placeholder="ช่วงเวลาไหน ?"
-                      value={timeRange}
-                      onChange={(e) => setTimeRange(e.target.value)}
-                      className="w-full pl-12 pr-4 py-4 bg-gray-50 rounded-2xl text-gray-700 placeholder-gray-400
+                      type="datetime-local"
+                      value={startDateTime}
+                      onChange={(e) => setStartDateTime(e.target.value)}
+                      className="w-full pl-12 pr-4 py-4 bg-gray-50 rounded-2xl text-gray-700
                         focus:outline-none focus:ring-2 focus:ring-[#5B7CFF] focus:bg-white focus:shadow-lg
                         transition-all duration-300"
                     />
