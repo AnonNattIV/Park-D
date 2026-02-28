@@ -252,7 +252,7 @@ export default function RegisterPage() {
       <div
         className={`
           hidden md:flex md:w-[55%] bg-[#4a7bff]
-          flex-col items-center justify-center p-12 text-white relative overflow-hidden
+          flex-col items-center justify-center p-12 text-white relative overflow-hidden rounded-l-[15rem]
           transition-all duration-700 ease-in-out
           ${isLoaded ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}
         `}

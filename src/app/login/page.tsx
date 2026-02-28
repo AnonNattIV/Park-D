@@ -114,7 +114,7 @@ export default function LoginPage() {
         className={`
           hidden md:flex md:w-[45%]
           bg-gradient-to-br from-[#5B7CFF] to-[#4a7bff]
-          flex-col items-center justify-center p-12 text-white relative overflow-hidden
+          flex-col items-center justify-center p-12 text-white relative overflow-hidden rounded-r-[15rem]
           transform transition-all duration-700 ease-in-out
           ${isLoaded ? 'translate-x-0 opacity-100' : 'md:-translate-x-full opacity-0'}
         `}
