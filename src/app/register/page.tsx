@@ -11,6 +11,9 @@ export default function RegisterPage() {
   });
 
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
     setIsLoaded(true);
@@ -18,20 +21,46 @@ export default function RegisterPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage('');
+    setSuccessMessage('');
 
-    // Validation
     if (formData.password !== formData.confirmPassword) {
-      alert('Passwords do not match!');
+      setErrorMessage('Passwords do not match');
       return;
     }
 
     if (formData.password.length < 8) {
-      alert('Password must be at least 8 characters!');
+      setErrorMessage('Password must be at least 8 characters');
       return;
     }
 
-    // TODO: Connect to your registration API
-    console.log('Registration attempt:', formData);
+    try {
+      setIsSubmitting(true);
+
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        setErrorMessage(result.error || 'Registration failed');
+        return;
+      }
+
+      setSuccessMessage('Registration successful. Redirecting to login...');
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 1200);
+    } catch (error) {
+      console.error('Register submit error:', error);
+      setErrorMessage('Unable to connect to server');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleSocialRegister = (provider: string) => {
@@ -70,6 +99,18 @@ export default function RegisterPage() {
           `}
           style={{ willChange: 'transform, opacity' }}
         >
+          {errorMessage && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {errorMessage}
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+              {successMessage}
+            </div>
+          )}
+
           {/* Username Input */}
           <div className="relative group">
             <input
@@ -77,6 +118,7 @@ export default function RegisterPage() {
               placeholder="Username"
               value={formData.username}
               onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              required
               className="w-full px-5 py-4 bg-[#f0f4f8] rounded-xl text-gray-700 placeholder-gray-400
                 focus:outline-none focus:ring-2 focus:ring-[#4a7bff] focus:bg-white
                 focus:shadow-lg
@@ -106,6 +148,7 @@ export default function RegisterPage() {
               placeholder="Email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              required
               className="w-full px-5 py-4 bg-[#f0f4f8] rounded-xl text-gray-700 placeholder-gray-400
                 focus:outline-none focus:ring-2 focus:ring-[#4a7bff] focus:bg-white
                 focus:shadow-lg
@@ -135,6 +178,7 @@ export default function RegisterPage() {
               placeholder="Password"
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              required
               className="w-full px-5 py-4 bg-[#f0f4f8] rounded-xl text-gray-700 placeholder-gray-400
                 focus:outline-none focus:ring-2 focus:ring-[#4a7bff] focus:bg-white
                 focus:shadow-lg
@@ -164,6 +208,7 @@ export default function RegisterPage() {
               placeholder="Confirm Password"
               value={formData.confirmPassword}
               onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+              required
               className="w-full px-5 py-4 bg-[#f0f4f8] rounded-xl text-gray-700 placeholder-gray-400
                 focus:outline-none focus:ring-2 focus:ring-[#4a7bff] focus:bg-white
                 focus:shadow-lg
@@ -189,102 +234,18 @@ export default function RegisterPage() {
           {/* Register Button */}
           <button
             type="submit"
+            disabled={isSubmitting}
             className="w-full py-4 bg-[#4a7bff] text-white font-bold rounded-xl
               hover:bg-[#3a6bef] hover:scale-[1.02] hover:shadow-xl
               active:scale-95
+              disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100
               transition-all duration-300 ease-in-out
             "
             style={{ willChange: 'transform, background-color, box-shadow' }}
           >
-            Register
+            {isSubmitting ? 'Registering...' : 'Register'}
           </button>
         </form>
-
-        {/* Social Login Divider */}
-        <div
-          className={`
-            w-full max-w-md mt-8
-            transition-all duration-500 ease-out delay-300
-            ${isLoaded ? 'opacity-100' : 'opacity-0'}
-          `}
-          style={{ willChange: 'opacity' }}
-        >
-          <div className="flex items-center gap-4">
-            <div className="flex-1 h-px bg-gray-300"></div>
-            <span className="text-gray-400 text-sm">or register with social platforms</span>
-            <div className="flex-1 h-px bg-gray-300"></div>
-          </div>
-        </div>
-
-        {/* Social Icons */}
-        <div
-          className={`
-            flex gap-4 mt-6
-            transition-all duration-500 ease-out delay-400
-            ${isLoaded ? 'translate-y-0 opacity-100' : '-translate-y-4 opacity-0'}
-          `}
-          style={{ willChange: 'transform, opacity' }}
-        >
-          <button
-            onClick={() => handleSocialRegister('Google')}
-            className="w-12 h-12 rounded-full bg-white border-2 border-gray-200
-              flex items-center justify-center
-              hover:bg-blue-50 hover:border-[#4a7bff] hover:scale-110 hover:shadow-lg
-              active:scale-95
-              transition-all duration-300 ease-in-out
-            "
-            style={{ willChange: 'transform, background-color, border-color, box-shadow' }}
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24">
-              <path fill="#EA4335" d="M5.266 9.765A7.077 7.077 0 0 1 12 4.909c1.69 0 3.218.6 4.418 1.582L19.91 3C17.782 1.145 15.055 0 12 0 7.27 0 3.198 2.698 1.24 6.65l4.026 3.115Z"/>
-              <path fill="#34A853" d="M16.04 18.013c-1.09.703-2.474 1.078-4.04 1.078a7.077 7.077 0 0 1-6.723-4.823l-4.04 3.067A11.965 11.965 0 0 0 12 24c2.933 0 5.735-1.043 7.834-3l-3.793-2.987Z"/>
-              <path fill="#4A90E2" d="M19.834 21c2.195-2.048 3.62-5.096 3.62-9 0-.71-.109-1.473-.272-2.182H12v4.637h6.436c-.317 1.559-1.17 2.766-2.395 3.558L19.834 21Z"/>
-              <path fill="#FBBC05" d="M5.277 14.268A7.12 7.12 0 0 1 4.909 12c0-.782.125-1.533.357-2.235L1.24 6.65A11.934 11.934 0 0 0 0 12c0 1.92.445 3.73 1.237 5.335l4.04-3.067Z"/>
-            </svg>
-          </button>
-          <button
-            onClick={() => handleSocialRegister('Facebook')}
-            className="w-12 h-12 rounded-full bg-white border-2 border-gray-200
-              flex items-center justify-center
-              hover:bg-blue-50 hover:border-[#4a7bff] hover:scale-110 hover:shadow-lg
-              active:scale-95
-              transition-all duration-300 ease-in-out
-            "
-            style={{ willChange: 'transform, background-color, border-color, box-shadow' }}
-          >
-            <svg className="w-5 h-5" fill="#1877F2" viewBox="0 0 24 24">
-              <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-            </svg>
-          </button>
-          <button
-            onClick={() => handleSocialRegister('GitHub')}
-            className="w-12 h-12 rounded-full bg-white border-2 border-gray-200
-              flex items-center justify-center
-              hover:bg-blue-50 hover:border-[#4a7bff] hover:scale-110 hover:shadow-lg
-              active:scale-95
-              transition-all duration-300 ease-in-out
-            "
-            style={{ willChange: 'transform, background-color, border-color, box-shadow' }}
-          >
-            <svg className="w-5 h-5" fill="#333" viewBox="0 0 24 24">
-              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-            </svg>
-          </button>
-          <button
-            onClick={() => handleSocialRegister('LinkedIn')}
-            className="w-12 h-12 rounded-full bg-white border-2 border-gray-200
-              flex items-center justify-center
-              hover:bg-blue-50 hover:border-[#4a7bff] hover:scale-110 hover:shadow-lg
-              active:scale-95
-              transition-all duration-300 ease-in-out
-            "
-            style={{ willChange: 'transform, background-color, border-color, box-shadow' }}
-          >
-            <svg className="w-5 h-5" fill="#0077B5" viewBox="0 0 24 24">
-              <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
-            </svg>
-          </button>
-        </div>
       </div>
 
       {/* Right Column - Welcome Section */}

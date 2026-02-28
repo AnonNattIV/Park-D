@@ -4,6 +4,10 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Park-D',
   description: 'Parking Management System',
+  icons: {
+    icon: '/image/ParkD.ico',
+    shortcut: '/image/ParkD.ico',
+  },
 };
 
 export default function RootLayout({

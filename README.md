@@ -19,3 +19,6 @@ docker run -p 3000:3000 park-d-nextjs
 Open: http://localhost:3000
 
 This repo currently only contains deployment files. Add your Next.js app files (`package.json`, source code, etc.) in the project root for the Docker build to work.
+
+## API/DB/Secrets Docs
+See [API_DB_GIT_SECRET.md](API_DB_GIT_SECRET.md).

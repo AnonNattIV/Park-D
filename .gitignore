@@ -1,42 +1,52 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Core secrets
+.gitsecret/keys/random_seed
+!*.secret
+.env
 
-# dependencies
+# Dependencies
 /node_modules
 /.pnp
 .pnp.js
 
-# testing
+# Testing
 /coverage
 
-# next.js
+# Next.js
 /.next/
 /out/
 
-# production
+# Production
 /build
 
-# misc
+# Misc
 .DS_Store
 *.pem
 
-# debug
+# Debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
+# Local env files
 .env*.local
 
-# vercel
+# Vercel
 .vercel
 
-# typescript
+# TypeScript
 *.tsbuildinfo
 next-env.d.ts
 
-# claude
+# Claude
 .claude/
 CLAUDE.md
 
-# public/uxui
+# Assets not committed
 /public/uxui/
+
+# dbDiagram
+db.png
+db.json
+
+# codex
+codex.md
