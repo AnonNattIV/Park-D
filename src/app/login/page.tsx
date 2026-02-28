@@ -16,7 +16,15 @@ export default function LoginPage() {
 
   const getRedirectPathByRole = (role?: string): string => {
     const normalizedRole = role?.toLowerCase();
-    return normalizedRole === 'admin' ? '/admin' : '/user';
+    if (normalizedRole === 'admin') {
+      return '/admin';
+    }
+
+    if (normalizedRole === 'owner') {
+      return '/owner/home';
+    }
+
+    return '/';
   };
 
   useEffect(() => {

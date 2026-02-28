@@ -5,6 +5,7 @@ import { verifyToken } from '@/lib/auth';
 import { OwnerRequestStatus, resolveAppRole } from '@/lib/roles';
 
 type PatchAction = 'REQUEST_OWNER' | 'APPROVE_OWNER' | 'REJECT_OWNER';
+const GENDER_OPTIONS = ['Male', 'Female', 'Other'] as const;
 
 interface TokenPayload {
   userId: string;
@@ -18,7 +19,10 @@ interface UserRow extends RowDataPacket {
   email: string;
   name: string;
   surname: string | null;
+  gender: string | null;
+  age: number | null;
   phone: string | null;
+  profile_image_url: string | null;
   u_status: 'ACTIVE' | 'INACTIVE' | 'BANNED';
   owner_request_status: OwnerRequestStatus;
   roles: string;
@@ -27,6 +31,16 @@ interface UserRow extends RowDataPacket {
 
 interface OwnerRoleRow extends RowDataPacket {
   user_id: number;
+}
+
+interface BookingHistoryRow extends RowDataPacket {
+  b_id: number;
+  parking_name: string;
+  booking_time: Date | string;
+  checkin_datetime: Date | string | null;
+  checkout_datetime: Date | string | null;
+  total_time_minutes: number | null;
+  total_price: number | string | null;
 }
 
 function parseUserId(rawId: string): number | null {
@@ -65,7 +79,10 @@ async function getUserById(userId: number): Promise<UserRow | null> {
       u.email,
       u.name,
       u.surname,
+      u.gender,
+      u.age,
       u.phone,
+      u.profile_image_url,
       u.u_status,
       u.owner_request_status,
       u.roles,
@@ -103,7 +120,10 @@ function buildUserResponse(user: UserRow) {
     email: user.email,
     name: user.name,
     surname: user.surname,
+    gender: user.gender,
+    age: user.age,
     phone: user.phone,
+    profileImageUrl: user.profile_image_url,
     status: user.u_status,
     ownerRequestStatus: user.owner_request_status,
     role: resolveAppRole({
@@ -112,6 +132,51 @@ function buildUserResponse(user: UserRow) {
       ownerRequestStatus: user.owner_request_status,
     }),
   };
+}
+
+async function getBookingHistory(userId: number) {
+  const [rows] = await getPool().query<BookingHistoryRow[]>(
+    `SELECT
+      b.b_id,
+      pl.location AS parking_name,
+      b.booking_time,
+      b.checkin_datetime,
+      b.checkout_datetime,
+      b.total_time_minutes,
+      CASE
+        WHEN b.total_time_minutes IS NULL THEN NULL
+        ELSE ROUND((b.total_time_minutes / 60) * pl.price, 2)
+      END AS total_price
+    FROM bookings b
+    INNER JOIN parking_lots pl ON pl.lot_id = b.lot_id
+    WHERE b.user_id = ?
+    ORDER BY b.booking_time DESC
+    LIMIT 10`,
+    [userId]
+  );
+
+  return rows.map((row) => ({
+    id: String(row.b_id),
+    parkingName: row.parking_name,
+    bookingTime: row.booking_time,
+    checkinTime: row.checkin_datetime,
+    checkoutTime: row.checkout_datetime,
+    durationMinutes: row.total_time_minutes,
+    totalPrice: row.total_price === null ? 0 : Number(row.total_price),
+  }));
+}
+
+async function emailExistsForAnotherUser(email: string, userId: number): Promise<boolean> {
+  const [rows] = await getPool().query<RowDataPacket[]>(
+    `SELECT user_id
+    FROM users
+    WHERE email = ?
+      AND user_id <> ?
+    LIMIT 1`,
+    [email, userId]
+  );
+
+  return rows.length > 0;
 }
 
 export async function GET(
@@ -148,9 +213,114 @@ export async function GET(
     return NextResponse.json({
       success: true,
       user: buildUserResponse(user),
+      bookings: await getBookingHistory(userId),
     });
   } catch (error) {
     console.error('Get user error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const userId = parseUserId(params.id);
+    if (!userId) {
+      return NextResponse.json({ error: 'Invalid user id' }, { status: 400 });
+    }
+
+    const requester = getRequesterAuth(request);
+    if (!requester) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const requesterId = Number(requester.userId);
+    if (!Number.isInteger(requesterId) || requesterId <= 0) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const requesterIsAdmin = requester.role.trim().toLowerCase() === 'admin';
+    if (requesterId !== userId && !requesterIsAdmin) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const body = await request.json();
+    const name = typeof body?.name === 'string' ? body.name.trim() : '';
+    const surname = typeof body?.surname === 'string' ? body.surname.trim() : '';
+    const rawGender = typeof body?.gender === 'string' ? body.gender.trim() : '';
+    const rawAge = body?.age;
+    const email = typeof body?.email === 'string' ? body.email.trim() : '';
+    const phone = typeof body?.phone === 'string' ? body.phone.trim() : '';
+    const gender = rawGender || null;
+    let age: number | null = null;
+
+    if (!name) {
+      return NextResponse.json({ error: 'First name is required' }, { status: 400 });
+    }
+
+    if (!email) {
+      return NextResponse.json({ error: 'Email is required' }, { status: 400 });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ error: 'Invalid email format' }, { status: 400 });
+    }
+
+    if (gender && !GENDER_OPTIONS.includes(gender as (typeof GENDER_OPTIONS)[number])) {
+      return NextResponse.json({ error: 'Invalid gender value' }, { status: 400 });
+    }
+
+    if (rawAge !== undefined && rawAge !== null && rawAge !== '') {
+      const parsedAge = Number(rawAge);
+      if (!Number.isInteger(parsedAge) || parsedAge < 1 || parsedAge > 150) {
+        return NextResponse.json({ error: 'Age must be between 1 and 150' }, { status: 400 });
+      }
+      age = parsedAge;
+    }
+
+    if (await emailExistsForAnotherUser(email, userId)) {
+      return NextResponse.json({ error: 'Email is already in use' }, { status: 409 });
+    }
+
+    const [updateResult] = await getPool().query<ResultSetHeader>(
+      `UPDATE users
+      SET name = ?,
+          surname = ?,
+          gender = ?,
+          age = ?,
+          email = ?,
+          phone = ?,
+          updated_at = NOW()
+      WHERE user_id = ?`,
+      [
+        name,
+        surname || null,
+        gender,
+        age,
+        email,
+        phone || null,
+        userId,
+      ]
+    );
+
+    if (updateResult.affectedRows === 0) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    const updatedUser = await getUserById(userId);
+    if (!updatedUser) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Profile updated',
+      user: buildUserResponse(updatedUser),
+    });
+  } catch (error) {
+    console.error('Put user error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

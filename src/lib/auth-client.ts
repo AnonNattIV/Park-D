@@ -2,9 +2,17 @@ export interface AuthUser {
   id: number;
   username: string;
   email?: string;
+  name?: string;
+  surname?: string | null;
+  gender?: string | null;
+  age?: number | null;
+  phone?: string | null;
   role: string;
   ownerRequestStatus?: string | null;
+  profileImageUrl?: string | null;
 }
+
+export const AUTH_STATE_CHANGE_EVENT = 'parkd-auth-changed';
 
 export function readStoredAuthUser(): AuthUser | null {
   if (typeof window === 'undefined') {
@@ -32,6 +40,18 @@ export function readStoredToken(): string | null {
   return localStorage.getItem('auth_token');
 }
 
+export function hasStoredAuth(): boolean {
+  return Boolean(readStoredToken() && readStoredAuthUser());
+}
+
+export function notifyAuthStateChanged(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.dispatchEvent(new Event(AUTH_STATE_CHANGE_EVENT));
+}
+
 export function clearStoredAuth(): void {
   if (typeof window === 'undefined') {
     return;
@@ -39,4 +59,5 @@ export function clearStoredAuth(): void {
 
   localStorage.removeItem('auth_token');
   localStorage.removeItem('auth_user');
+  notifyAuthStateChanged();
 }

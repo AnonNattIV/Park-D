@@ -1,0 +1,20 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { listHomeParkingLots } from '@/lib/parking-lots';
+
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const locationFilter = searchParams.get('location') || '';
+    const parkingLots = await listHomeParkingLots(locationFilter);
+
+    return NextResponse.json({ parkingLots });
+  } catch (error) {
+    console.error('Unable to load parking lots:', error);
+    return NextResponse.json(
+      { error: 'Unable to load parking lots right now' },
+      { status: 500 }
+    );
+  }
+}
