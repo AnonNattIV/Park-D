@@ -1,163 +1,208 @@
 # Park-D Architecture (Current State)
 
-Last updated: 2026-02-27
+Last updated: 2026-03-01
 
-## 1. Overview
+## 1. Project Summary
 
-Park-D is a Next.js App Router application with:
+Park-D is a Next.js App Router application for:
 
-- DB-backed authentication against the `users` table
-- JWT-based auth for API access
-- a shared mock homepage for renter and owner users at `/user`
-- a separate mock homepage for admin users at `/admin`
-- an owner request workflow exposed through `PATCH /api/USER/{id}`
+- browsing approved parking lots from a public homepage
+- registering and logging in with MySQL-backed accounts
+- viewing and editing a user profile
+- requesting owner access
+- viewing an owner parking dashboard
 
-The root route redirects to `/login`.
+The current app is a mix of live data features and mock UI:
 
-## 2. Tech Stack
+- the public homepage, login/register, profile page, owner request flow, and owner parking table are connected to the database
+- the admin dashboard is still mock-only
+- the owner add/manage parking pages are still client-side mock forms and do not persist changes yet
 
-- Framework: Next.js 14 (`app` directory, standalone build output)
-- UI: React 18 + Tailwind CSS
-- Language: TypeScript (`strict: true`)
-- Auth libraries: `bcryptjs`, `jsonwebtoken`
-- Database driver: `mysql2`
+The root route `/` is now the public homepage. It no longer redirects to `/login`.
+
+## 2. Runtime Stack
+
+- Framework: Next.js 14.2 (`app` directory, `output: 'standalone'`)
+- UI: React 18.3 + Tailwind CSS 3.4
+- Language: TypeScript 5.5 (`strict: true`)
+- Auth: `bcryptjs`, `jsonwebtoken`
+- Database: `mysql2/promise`
+- Object storage: `@aws-sdk/client-s3`
+- Icons: `@heroicons/react`
+- Image support: `sharp` is installed in `package.json` (not imported directly in app code, but useful for Next.js production image handling)
+- Tooling: ESLint, PostCSS, Autoprefixer
 - Deployment: Docker + Docker Compose
 
-## 3. Source of Truth
+## 3. What To Install / External Services
 
-The current source of truth for schema design is [db.json](C:\Users\natta\Documents\univer\year3\PM\Park-D\db.json).
+### Local tools
 
-`db.json` is now a database structure export, not the older hand-written JSON schema. It describes the current Railway database layout.
+- Node.js 20.x or newer
+- npm (bundled with Node.js)
+- Optional: Docker Desktop if you want to run the containerized build
 
-Current tables:
+### JavaScript packages
 
-- `users`
-- `owner_profiles`
-- `parking_lots`
-- `bookings`
-- `payments`
-- `reviews`
+Install project dependencies with one of:
 
-Current relationship model:
+- `npm install`
+- `npm ci` (preferred when using the committed lockfile)
 
-- `owner_profiles.user_id` -> `users.user_id`
-- `parking_lots.owner_user_id` -> `owner_profiles.user_id`
-- `bookings.user_id` -> `users.user_id`
-- `bookings.lot_id` -> `parking_lots.lot_id`
-- `payments.b_id` -> `bookings.b_id`
-- `reviews.b_id` -> `bookings.b_id`
+### External services required by the current code
 
-There is no separate `admins` table in the current schema.
+- A MySQL-compatible database with the Park-D schema
+- An S3-compatible object storage bucket for profile images
 
-## 4. Role Model
+The profile image feature depends on object storage. Without the AWS/S3 variables below, the app can still run, but `POST /api/profile-image`, `DELETE /api/profile-image`, and `GET /api/profile-image/[...key]` will fail.
 
-Application roles are derived from the `users` table.
+### Required environment variables
 
-Relevant columns:
+Authentication:
 
-- `users.roles`: MySQL `SET('RENTER','OWNER','ADMIN')`
-- `users.owner_request_status`: `PENDING | APPROVED | REJECTED | NULL`
-- `users.u_status`: `ACTIVE | INACTIVE | BANNED`
+- `JWT_SECRET`
 
-Runtime role mapping:
+Database:
 
-- `ADMIN` in `users.roles` -> app role `admin`
-- approved owner state -> app role `owner`
-- otherwise -> app role `user` (used as renter in the UI)
+- `DB_HOST`
+- `DB_PORT`
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_NAME`
+- `DB_SSL` (optional, defaults to enabled unless set to `false`)
 
-Owner is treated as active when:
+Object storage:
 
-- `owner_request_status = 'APPROVED'`
-- `owner_profiles` row exists
+- `AWS_S3_BUCKET_NAME`
+- `AWS_ENDPOINT_URL`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_DEFAULT_REGION` (optional, defaults to `auto`)
 
-The current resolver also treats approved owner state as `owner` even if the `OWNER` flag is not present in `users.roles`, so DB role flags and owner profile state can drift.
+Important notes:
 
-## 5. Codebase Layout
+- `.env.example` currently documents only JWT + DB settings. It does not include the AWS/S3 variables used by the profile image routes.
+- `docker-compose.yml` loads `.env`, not `.env.local`.
 
-- `src/app/layout.tsx`: root layout and metadata
-- `src/app/page.tsx`: redirects `/` to `/login`
-- `src/app/login/page.tsx`: login UI, calls login API, stores token, redirects by role
-- `src/app/register/page.tsx`: registration UI, calls register API
-- `src/app/user/page.tsx`: shared mock page for renter and owner
-- `src/app/admin/page.tsx`: separate mock page for admin only
-- `src/app/api/auth/login/route.ts`: DB-backed login
-- `src/app/api/auth/register/route.ts`: DB-backed registration
-- `src/app/api/USER/[id]/route.ts`: user read/update and owner request workflow
-- `src/lib/auth.ts`: bcrypt/JWT/validation helpers
-- `src/lib/auth-client.ts`: client-side localStorage auth helpers
-- `src/lib/roles.ts`: app role resolver from `users.roles`
-- `src/lib/db/mysql.ts`: primary MySQL pool used by API routes
-- `lib/db.js`: legacy MySQL pool helper still present, not the preferred path for new code
-- `src/lib/db/prisma.ts`: commented template/reference file, not active runtime code
+## 4. Current Route Map
 
-## 6. Frontend Flow
+### Public pages
 
-### Login
+- `/`
+  - public homepage
+  - renders `ParkingHomePage`
+  - fetches live parking lot data from `GET /api/parking-lots`
+  - shows pricing only when a valid local auth state exists
 
-- The login page posts to `POST /api/auth/login`
-- On success:
-  - stores JWT in `localStorage` as `auth_token`
-  - stores user payload in `localStorage` as `auth_user`
-  - redirects `admin` to `/admin`
-  - redirects all other users (`owner` and renter) to `/user`
-- For non-admin users, the client also fetches `GET /api/USER/{id}` after login to refresh the stored user payload
+- `/login`
+  - login form
+  - posts to `POST /api/auth/login`
+  - stores `auth_token` and `auth_user` in `localStorage`
+  - redirects by resolved role:
+    - `admin` -> `/admin`
+    - `owner` -> `/owner/home`
+    - default -> `/`
 
-### Registration
+- `/register`
+  - registration form
+  - posts to `POST /api/auth/register`
+  - redirects to `/login` on success
 
-- The registration page posts to `POST /api/auth/register`
-- On success it redirects back to `/login`
+### Authenticated pages
 
-### Mock Homepages
+- `/aboutme`
+  - client-side auth check using `localStorage`
+  - loads profile data and booking history via `GET /api/USER/[id]`
+  - updates profile via `PUT /api/USER/[id]`
+  - uploads/deletes profile images via `/api/profile-image`
 
-- `/user`
-  - shared for renter and owner
-  - blocks admin users and redirects them to `/admin`
-  - currently displays mock booking summary data
+- `/owner/home`
+  - client-side auth check using `localStorage`
+  - if role is `owner` or `admin`, loads live parking lot system data from `GET /api/parking-lots/system`
+  - if role is `user`, shows owner request UI and calls `PATCH /api/USER/[id]` with `REQUEST_OWNER`
 
 - `/admin`
-  - allows only admin users
-  - redirects non-admin users to `/user`
-  - currently displays mock moderation metrics and a local-only owner verification queue
+  - client-side auth check using `localStorage`
+  - only allows users whose stored role is `admin`
+  - still uses mock summary data and a local-only owner verification queue
+  - does not call the backend approval API yet
 
-## 7. Backend API
+### Redirect / compatibility route
+
+- `/user/home`
+  - immediately redirects to `/`
+  - kept as a compatibility alias for older navigation code
+
+### Owner mock pages (not wired to backend yet)
+
+- `/owner/parkingspace`
+  - client-only add parking form
+  - currently validates locally, shows an alert, and redirects back to `/owner/home`
+  - no API call is made
+
+- `/owner/parkingmanage`
+  - client-only parking edit/delete form
+  - currently edits mock local state only
+  - no API call is made
+
+## 5. API Surface
 
 ### `POST /api/auth/login`
 
-- Reads a user by `username` or `email` from `users`
-- Verifies `password_hash` with bcrypt
-- Rejects non-`ACTIVE` accounts
-- Resolves app role from `users.roles`, `owner_request_status`, and `owner_profiles`
-- Returns:
+- reads a user by `username` or `email`
+- checks `u_status = 'ACTIVE'`
+- verifies `password_hash` with bcrypt
+- resolves app role from `users.roles`, `owner_profiles`, and `owner_request_status`
+- returns:
   - `token`
-  - basic user payload (`id`, `username`, `email`, `role`, `ownerRequestStatus`)
+  - `user.id`
+  - `user.username`
+  - `user.email`
+  - `user.role`
+  - `user.ownerRequestStatus`
 
 ### `POST /api/auth/register`
 
-- Validates required fields
-- Validates email format
-- Validates password strength
-- Rejects duplicate username/email
-- Inserts into `users`
-- Sets:
-  - `username`
-  - `email`
-  - `password_hash`
+- validates username, email, password, and confirm password
+- enforces:
+  - email format
+  - minimum password length 8
+  - at least one uppercase letter
+  - at least one number
+- rejects duplicate `username` or `email`
+- inserts a new row into `users`
+- sets:
   - `name = username`
   - `u_status = 'ACTIVE'`
   - `owner_request_status = NULL`
-- Does not explicitly set `roles`, so the DB default (`RENTER`) is relied on
+- does not explicitly set `roles`, so the database default is still relied on
 
-### `GET /api/USER/{id}`
+### `GET /api/USER/[id]`
 
-- Loads user data from `users`
-- Left joins `owner_profiles`
-- Returns normalized user payload with resolved app role
-- Access rules:
-  - self access allowed
-  - admin access allowed
-  - approved owner management access allowed
+- requires `Authorization: Bearer <token>`
+- allows:
+  - self access
+  - admin access
+  - approved owner management access
+- returns:
+  - normalized user profile
+  - latest booking history (up to 10 rows)
 
-### `PATCH /api/USER/{id}`
+### `PUT /api/USER/[id]`
+
+- requires `Authorization: Bearer <token>`
+- allows:
+  - self updates
+  - admin updates
+- updates:
+  - `name`
+  - `surname`
+  - `gender`
+  - `age`
+  - `email`
+  - `phone`
+- enforces unique email across users
+
+### `PATCH /api/USER/[id]`
 
 Supported actions:
 
@@ -168,89 +213,206 @@ Supported actions:
 Behavior:
 
 - `REQUEST_OWNER`
-  - only the user can request for themselves
-  - sets `users.owner_request_status = 'PENDING'`
+  - self only
+  - sets `owner_request_status = 'PENDING'`
 
 - `APPROVE_OWNER`
   - requires admin or approved owner access
-  - sets `users.owner_request_status = 'APPROVED'`
+  - requires `citizenId` in the request body
+  - sets `owner_request_status = 'APPROVED'`
   - inserts or updates `owner_profiles`
 
 - `REJECT_OWNER`
   - requires admin or approved owner access
-  - sets `users.owner_request_status = 'REJECTED'`
+  - sets `owner_request_status = 'REJECTED'`
 
-The endpoint currently updates owner approval state, but it does not update the `users.roles` SET to add or remove `OWNER`.
+Important limitation:
 
-## 8. Auth and Session Model
+- approval/rejection does not update the `users.roles` SET to add or remove `OWNER`
 
-- JWTs are generated in `src/lib/auth.ts`
-- API routes use `Authorization: Bearer <token>`
-- Client auth state is stored in browser `localStorage`
-- There is no cookie-based session layer
-- There is no server-side route guard or middleware yet; access checks are implemented inside pages and API routes
+### `GET /api/parking-lots`
 
-## 9. Data Access Layer
+- public endpoint
+- returns approved and active parking lots for the homepage
+- supports optional `?location=...` filtering
+- data is built from `parking_lots`, `users`, and active `bookings`
 
-Primary runtime DB access is through [src/lib/db/mysql.ts](C:\Users\natta\Documents\univer\year3\PM\Park-D\src\lib\db\mysql.ts).
+### `GET /api/parking-lots/system`
 
-Required env vars:
+- requires `Authorization: Bearer <token>`
+- only allows `owner` or `admin`
+- `admin` receives all lots
+- `owner` receives only lots where `parking_lots.owner_user_id = requester user id`
 
-- `DB_HOST`
-- `DB_PORT`
-- `DB_USER`
-- `DB_PASSWORD`
-- `DB_NAME`
+### `POST /api/profile-image`
 
-Optional env var:
+- requires `Authorization: Bearer <token>`
+- accepts a multipart `file`
+- accepts image files only
+- limits size to 5 MB
+- uploads to S3-compatible storage
+- stores the proxied URL in `users.profile_image_url`
 
-- `DB_SSL` (defaults to enabled unless set to `false`)
+### `DELETE /api/profile-image`
 
-The pool is created once and reused.
+- requires `Authorization: Bearer <token>`
+- clears `users.profile_image_url`
+- deletes the previously stored object from S3-compatible storage
 
-## 10. Deployment
+### `GET /api/profile-image/[...key]`
+
+- public proxy endpoint for profile images
+- reads the object from S3-compatible storage
+- streams bytes back through Next.js with a short cache header
+
+## 6. Auth and Session Model
+
+- JWTs are generated and verified in `src/lib/auth.ts`
+- client auth state is stored in `localStorage`:
+  - `auth_token`
+  - `auth_user`
+- client components listen for `parkd-auth-changed` to refresh UI auth state
+- API routes manually parse `Authorization: Bearer <token>`
+- there is no cookie session layer
+- there is no Next.js middleware-based route protection
+- page protection is currently client-side and inconsistent across routes
+
+## 7. Data Model Used by the Current App
+
+The database export in `db.json` is still the broad schema reference, but the current code actively uses only part of it.
+
+### Tables used by the current app code
+
+- `users`
+- `owner_profiles`
+- `parking_lots`
+- `bookings`
+
+### Tables present in the schema but not used by current route code
+
+- `payments`
+- `reviews`
+
+### Key user fields used in code
+
+- `user_id`
+- `username`
+- `email`
+- `password_hash`
+- `name`
+- `surname`
+- `gender`
+- `age`
+- `phone`
+- `profile_image_url`
+- `u_status`
+- `roles`
+- `owner_request_status`
+
+### Key owner fields used in code
+
+- `owner_profiles.user_id`
+- `owner_profiles.o_citizen_id`
+- `owner_profiles.earning`
+
+### Key parking lot fields used in code
+
+- `lot_id`
+- `owner_user_id`
+- `location`
+- `description`
+- `total_slot`
+- `price`
+- `p_status`
+- `is_approve`
+- `address_line`
+- `street_number`
+- `district`
+- `amphoe`
+- `subdistrict`
+- `province`
+- `latitude`
+- `longitude`
+
+### Key booking fields used in code
+
+- `b_id`
+- `user_id`
+- `lot_id`
+- `booking_time`
+- `checkin_datetime`
+- `checkout_datetime`
+- `total_time_minutes`
+- `b_status`
+
+## 8. Role Resolution
+
+Application roles are derived from database state, not from a single column alone.
+
+Current mapping in `src/lib/roles.ts`:
+
+- `ADMIN` in `users.roles` -> app role `admin`
+- approved owner state with an `owner_profiles` row -> app role `owner`
+- otherwise -> app role `user`
+
+Owner state is considered active when:
+
+- `owner_request_status = 'APPROVED'`
+- `owner_profiles` contains a row for the user
+
+Current inconsistency:
+
+- a user can resolve to `owner` even if `users.roles` does not contain `OWNER`
+- this happens because the resolver trusts owner profile state and approval status
+- `PATCH /api/USER/[id]` does not synchronize the `users.roles` flag
+
+## 9. Code Layout
+
+### App routes
+
+- `src/app/*`: Next.js pages and API routes
+- `src/app/api/*`: route handlers for auth, user data, parking lots, and profile images
+
+### Shared libraries
+
+- `src/lib/auth.ts`: password hashing, token signing, validation helpers
+- `src/lib/auth-client.ts`: `localStorage` auth helpers for client components
+- `src/lib/roles.ts`: database-to-app role mapping
+- `src/lib/db/mysql.ts`: primary MySQL pool factory
+- `src/lib/parking-lots.ts`: SQL queries and response shaping for home and owner parking lists
+- `src/lib/storage.ts`: S3-compatible upload, fetch, and delete helpers
+
+### Components
+
+- `src/components/ParkingHomePage.tsx`: public parking discovery page
+- `src/components/Tabbar.tsx`: shared top navigation with auth-aware state
+- `src/components/*`: owner cards, booking cards, and parking image UI helpers
+
+### Legacy / reference files
+
+- `lib/db.js`: older MySQL pool helper that duplicates current connection logic
+- `src/lib/db/prisma.ts`: commented template/reference file, not active runtime code
+
+## 10. Current Behavior Notes
+
+- The homepage search UI has a `timeRange` input, but that value is not used by the API yet.
+- The homepage "Book" button is UI-only and does not start a booking flow.
+- The admin page approve/reject buttons mutate local React state only.
+- The admin page cannot currently approve a real owner request because it does not call `PATCH /api/USER/[id]`, and the API requires a `citizenId` for approval.
+- The owner add/manage pages do not call any parking create/update/delete API.
+- `README.md` is outdated and still says the repo only contains deployment files.
+- Secret-related files (`.env.secret`, `db.json.secret`, `db.png.secret`) are present alongside local plaintext artifacts.
+
+## 11. Deployment
 
 - `next.config.mjs` uses `output: 'standalone'`
-- `Dockerfile` uses multi-stage build (`deps`, `builder`, `runner`)
-- Production container runs as a non-root user
+- `Dockerfile` uses a multi-stage build:
+  - `deps`
+  - `builder`
+  - `runner`
+- production runs as a non-root `nextjs` user inside the container
 - `docker-compose.yml`:
   - builds the Next.js image
   - exposes port `3000`
-  - loads variables from `.env`
+  - loads environment variables from `.env`
 
-## 11. Secrets and Repository State
-
-Current secret handling:
-
-- `.env` is local and ignored
-- `.env.secret` is tracked via `git-secret`
-- `db.json.secret` and `db.png.secret` are also tracked encrypted artifacts
-
-The plaintext files `db.json` and `db.png` may exist locally for reference, but the encrypted `.secret` files are the tracked secret-safe versions.
-
-## 12. Current Verified Build State
-
-Verified on 2026-02-27:
-
-- `npm run lint`: passes
-- `npm run build`: passes
-
-Current app routes:
-
-- `/`
-- `/login`
-- `/register`
-- `/user`
-- `/admin`
-- `/api/auth/login`
-- `/api/auth/register`
-- `/api/USER/[id]`
-
-## 13. Current Gaps
-
-- `/user` and `/admin` are still mock dashboards, not real feature pages
-- the admin page approve/reject buttons currently mutate only local page state and do not call `PATCH /api/USER/{id}`
-- owner approval state and `users.roles` can become inconsistent because `PATCH /api/USER/{id}` does not maintain the `OWNER` flag
-- registration currently captures only username/email/password and uses `name = username`; richer user profile fields are not collected yet
-- `lib/db.js` duplicates connection logic that now also exists in `src/lib/db/mysql.ts`
-- `README.md` and some older docs still describe an earlier project state
