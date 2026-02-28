@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { PlusIcon } from '@heroicons/react/24/outline';
 import Tabbar from '@/components/Tabbar';
 import OwnerStatCard from '@/components/OwnerStatCard';
@@ -20,6 +21,8 @@ interface OwnerParking {
 }
 
 export default function OwnerPage() {
+  const router = useRouter();
+
   // State for owner access request
   const [ownerRequestStatus, setOwnerRequestStatus] = useState<'idle' | 'pending' | 'approved'>('idle');
   const [ownerUsername] = useState('jariyawat');
@@ -57,13 +60,11 @@ export default function OwnerPage() {
   };
 
   const handleManageParking = (id: string) => {
-    console.log('Manage parking space:', id);
-    // TODO: Open manage modal or navigate to edit page
+    router.push('/owner/parkingmanage');
   };
 
   const handleAddParking = () => {
-    console.log('Add new parking space');
-    // TODO: Open add parking modal or navigate to add page
+    router.push('/owner/parkingspace');
   };
 
   return (
