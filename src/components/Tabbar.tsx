@@ -1,9 +1,9 @@
 'use client';
 
 import { useRouter, usePathname } from 'next/navigation';
-import { HomeIcon, BuildingOffice2Icon, UserIcon } from '@heroicons/react/24/outline';
+import { HomeIcon, BuildingOffice2Icon, UserCircleIcon, ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline';
 
-type TabType = 'home' | 'owner' | 'about';
+type TabType = 'home' | 'owner' | 'aboutme';
 
 const tabs: { id: TabType; label: string; href: string; icon: React.ReactNode }[] = [
   {
@@ -19,10 +19,10 @@ const tabs: { id: TabType; label: string; href: string; icon: React.ReactNode }[
     icon: <BuildingOffice2Icon className="w-5 h-5" />,
   },
   {
-    id: 'about',
+    id: 'aboutme',
     label: 'About Me',
-    href: '/login',
-    icon: <UserIcon className="w-5 h-5" />,
+    href: '/aboutme',
+    icon: <UserCircleIcon className="w-5 h-5" />,
   },
 ];
 
@@ -33,6 +33,7 @@ export default function Tabbar() {
   const getActiveTab = (): TabType => {
     if (pathname === '/' || pathname === '/user/home') return 'home';
     if (pathname === '/owner' || pathname === '/owner/home') return 'owner';
+    if (pathname === '/aboutme') return 'aboutme';
     return 'home';
   };
 
@@ -56,25 +57,37 @@ export default function Tabbar() {
             </span>
           </div>
 
-          {/* Menu Tabs */}
-          <div className="flex items-center gap-1 bg-gray-100 rounded-full px-1.5 py-1">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => handleTabClick(tab.href)}
-                className={`
-                  flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300
-                  ${
-                    activeTab === tab.id
-                      ? 'bg-white text-[#5B7CFF] shadow-md'
-                      : 'text-gray-600 hover:text-gray-800 hover:bg-gray-200/50'
-                  }
-                `}
-              >
-                {tab.icon}
-                <span>{tab.label}</span>
-              </button>
-            ))}
+          {/* Menu Tabs + Sign In */}
+          <div className="flex items-center gap-2">
+            {/* Tabs */}
+            <div className="flex items-center gap-1 bg-gray-100 rounded-full px-1.5 py-1">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => handleTabClick(tab.href)}
+                  className={`
+                    flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300
+                    ${
+                      activeTab === tab.id
+                        ? 'bg-white text-[#5B7CFF] shadow-md'
+                        : 'text-gray-600 hover:text-gray-800 hover:bg-gray-200/50'
+                    }
+                  `}
+                >
+                  {tab.icon}
+                  <span>{tab.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Sign In Button */}
+            <button
+              onClick={() => router.push('/login')}
+              className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium bg-[#5B7CFF] text-white hover:bg-[#4a6bef] transition-all duration-300"
+            >
+              <ArrowRightOnRectangleIcon className="w-5 h-5" />
+              <span className="hidden sm:inline">Sign In</span>
+            </button>
           </div>
         </div>
       </div>
