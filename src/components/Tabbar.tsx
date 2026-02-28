@@ -56,7 +56,7 @@ export default function Tabbar() {
 
   const getActiveTab = (): TabType => {
     if (pathname === '/' || pathname === '/user/home') return 'home';
-    if (pathname === '/owner' || pathname === '/owner/home') return 'owner';
+    if (pathname === '/owner' || pathname.startsWith('/owner')) return 'owner';
     if (pathname === '/aboutme') return 'aboutme';
     return 'home';
   };
