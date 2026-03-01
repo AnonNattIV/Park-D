@@ -116,15 +116,18 @@ export default function LoginPage() {
   };
 
   return (
-    <div className={`min-h-screen flex overflow-hidden ${isLoaded ? 'opacity-100' : 'opacity-0'} transition-all duration-700 ease-in-out`}>
+    <div className={`min-h-screen flex flex-col md:flex-row overflow-hidden ${isLoaded ? 'opacity-100' : 'opacity-0'} transition-all duration-700 ease-in-out`}>
       {/* Left Section - Welcome Area */}
       <div
         className={`
-          hidden md:flex md:w-[45%]
+          flex flex-col items-center justify-center
+          w-full md:w-[45%] md:flex
           bg-gradient-to-br from-[#5B7CFF] to-[#4a7bff]
-          flex-col items-center justify-center p-12 text-white relative overflow-hidden rounded-r-[15rem]
+          text-white relative overflow-hidden
+          rounded-b-[12rem] md:rounded md:rounded-r-[15rem]
+          p-6 md:p-12
           transform transition-all duration-700 ease-in-out
-          ${isLoaded ? 'translate-x-0 opacity-100' : 'md:-translate-x-full opacity-0'}
+          ${isLoaded ? 'translate-y-0 md:translate-x-0 opacity-100' : '-translate-y-full md:-translate-x-full opacity-0'}
         `}
         style={{ willChange: 'transform, opacity' }}
       >
@@ -189,7 +192,7 @@ export default function LoginPage() {
         className={`
           w-full md:w-[55%] bg-white flex flex-col items-center justify-center p-8 md:p-16
           transition-all duration-700 ease-in-out
-          ${isLoaded ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}
+          ${isLoaded ? 'translate-y-0 md:translate-x-0 opacity-100' : 'translate-y-full md:translate-x-full opacity-0'}
         `}
         style={{ willChange: 'transform, opacity' }}
       >

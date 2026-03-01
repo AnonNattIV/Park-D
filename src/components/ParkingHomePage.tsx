@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import Tabbar from '@/components/Tabbar';
 import { readStoredAuthUser, readStoredToken } from '@/lib/auth-client';
 
@@ -265,10 +266,11 @@ export default function ParkingHomePage({
 
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
             {parkingLots.map((lot) => (
-              <div
+              <Link
                 key={lot.id}
+                href="/parkingdetail"
                 className="group cursor-pointer overflow-hidden rounded-3xl bg-white shadow-lg transition-all duration-300
-                  hover:-translate-y-1 hover:shadow-2xl"
+                  hover:shadow-xl hover:scale-[1.02]"
               >
                 <div className="relative h-48 overflow-hidden bg-gradient-to-br from-[#5B7CFF] to-[#4a7bff]">
                   {lot.mapEmbedUrl ? (
@@ -341,7 +343,7 @@ export default function ParkingHomePage({
                     </button>
                   </div>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </section>
