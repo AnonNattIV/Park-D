@@ -134,7 +134,7 @@ export default function LoginPage() {
             w-full md:w-[45%]
             bg-gradient-to-br from-[#5B7CFF] to-[#4a7bff]
             text-white relative overflow-hidden
-            rounded-b-[12rem] md:rounded md:rounded-r-[15rem]
+            rounded-b-[10rem] md:rounded md:rounded-r-[12rem]
             p-8 md:p-12
             transition-all duration-700 ease-in-out
             ${isLoaded ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-50'}

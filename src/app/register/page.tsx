@@ -87,7 +87,7 @@ export default function RegisterPage() {
             w-full md:w-[45%]
             bg-gradient-to-br from-[#5B7CFF] to-[#4a7bff]
             text-white relative overflow-hidden
-            rounded-b-[12rem] md:rounded md:rounded-l-[15rem]
+            rounded-b-[10rem] md:rounded md:rounded-l-[12rem]
             p-8 md:p-12
             transition-all duration-700 ease-in-out
             ${isLoaded ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-50'}
@@ -297,7 +297,7 @@ export default function RegisterPage() {
                 `}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0m-6 4h16m-7 4h7a2 2 0 002-2v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </span>
             </div>
