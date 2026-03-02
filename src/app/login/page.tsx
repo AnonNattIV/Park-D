@@ -165,7 +165,7 @@ export default function LoginPage() {
             width={160.45}
             height={55.7}
             className={`
-              mx-auto mb-6
+              mx-auto mb-3
               transition-all duration-500 ease-out
               ${isLoaded ? 'scale-100 opacity-100' : 'scale-0 opacity-0'}
             `}
