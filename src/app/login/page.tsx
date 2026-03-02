@@ -198,7 +198,7 @@ export default function LoginPage() {
             flex flex-col items-center justify-center
             p-8 md:p-12
             transition-all duration-700 ease-in-out
-            ${isLoaded ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}
+            ${isLoaded ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}
           `}
         >
           <div

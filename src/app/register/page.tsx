@@ -75,7 +75,7 @@ export default function RegisterPage() {
         className={`
           w-full max-w-4xl flex flex-col md:flex-row-reverse
           backdrop-blur-xl bg-white/20 border border-white/20
-          drop-shadow-xl shadow-2xl rounded-3xl overflow-hidden 
+          shadow-2xl rounded-3xl overflow-hidden
           transition-all duration-500 ease-in-out
           ${isLoaded ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-8'}
         `}
@@ -90,7 +90,7 @@ export default function RegisterPage() {
             rounded-b-[12rem] md:rounded md:rounded-l-[15rem]
             p-8 md:p-12
             transition-all duration-700 ease-in-out
-            ${isLoaded ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-50'}
+            ${isLoaded ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-50'}
           `}
         >
           {/* Decorative Circles */}
@@ -140,7 +140,7 @@ export default function RegisterPage() {
             flex flex-col items-center justify-center
             p-8 md:p-12
             transition-all duration-700 ease-in-out
-            ${isLoaded ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}
+            ${isLoaded ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0'}
           `}
         >
           <div
