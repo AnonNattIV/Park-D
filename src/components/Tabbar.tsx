@@ -81,7 +81,7 @@ export default function Tabbar() {
   return (
     <>
       {/* Desktop Navigation - Top Sticky Bar */}
-      <nav className="md:sticky md:top-0 md:z-50 md:bg-white/95 md:backdrop-blur-sm md:shadow-sm">
+      <nav className="md:sticky md:top-0 md:z-50 md:bg-white/95 md:backdrop-blur-sm md:shadow-[0_1px_10px_rgba(0,0,0,0.1)]">
         <div className="hidden md:block mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* Logo */}
