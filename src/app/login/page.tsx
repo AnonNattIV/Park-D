@@ -121,15 +121,14 @@ export default function LoginPage() {
       <div
         className={`
           flex flex-col items-center justify-center
-          w-full md:w-[45%] md:flex
+          w-full md:w-[40%] md:flex
           bg-gradient-to-br from-[#5B7CFF] to-[#4a7bff]
           text-white relative overflow-hidden
           rounded-b-[12rem] md:rounded md:rounded-r-[15rem]
           p-6 md:p-12
-          transform transition-all duration-700 ease-in-out
-          ${isLoaded ? 'translate-y-0 md:translate-x-0 opacity-100' : '-translate-y-full md:-translate-x-full opacity-0'}
+          transition-all duration-700 ease-in-out
+          ${isLoaded ? 'translate-x-0 md:translate-x-0 opacity-100' : '-translate-x-full md:-translate-x-full opacity-50'}
         `}
-        style={{ willChange: 'transform, opacity' }}
       >
         {/* Decorative Circles */}
         <div
@@ -137,18 +136,16 @@ export default function LoginPage() {
             absolute top-0 left-0 w-64 h-64 bg-white/10 rounded-full
             -translate-x-1/2 -translate-y-1/2
             transition-all duration-600 ease-out
-            ${isLoaded ? 'scale-100 opacity-100' : 'scale-0 opacity-0'}
+            ${isLoaded ? 'translate-y-0 opacity-100' : '-translate-y-8 opacity-0'}
           `}
-          style={{ willChange: 'transform, opacity' }}
         ></div>
         <div
           className={`
             absolute bottom-0 right-0 w-48 h-48 bg-white/10 rounded-full
             translate-x-1/4 translate-y-1/4
             transition-all duration-600 ease-out delay-100
-            ${isLoaded ? 'scale-100 opacity-100' : 'scale-0 opacity-0'}
+            ${isLoaded ? 'translate-y-0 opacity-100' : 'translate-y-6 opacity-0'}
           `}
-          style={{ willChange: 'transform, opacity' }}
         ></div>
 
         <div
@@ -157,7 +154,6 @@ export default function LoginPage() {
             transition-all duration-500 ease-out delay-200
             ${isLoaded ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'}
           `}
-          style={{ willChange: 'transform, opacity' }}
         >
           <Image
             src="/image/ParkD_White.png"
@@ -167,9 +163,8 @@ export default function LoginPage() {
             className={`
               mx-auto mb-3
               transition-all duration-500 ease-out
-              ${isLoaded ? 'scale-100 opacity-100' : 'scale-0 opacity-0'}
+              ${isLoaded ? 'translate-y-0 opacity-100' : '-translate-y-4 opacity-0'}
             `}
-            style={{ willChange: 'transform, opacity' }}
           />
           <h1 className="text-5xl font-bold mb-4">Welcome to Park:D</h1>
           <p className="text-lg opacity-90 mb-8">Do not have an account?</p>
@@ -180,7 +175,6 @@ export default function LoginPage() {
               active:scale-95
               transition-all duration-300 ease-in-out
             "
-            style={{ willChange: 'transform' }}
           >
             Register
           </button>
@@ -190,11 +184,10 @@ export default function LoginPage() {
       {/* Right Section - Login Form */}
       <div
         className={`
-          w-full md:w-[55%] bg-white flex flex-col items-center justify-center p-8 md:p-16
+          w-full md:w-[60%] bg-white flex flex-col items-center justify-center p-8 md:p-16
           transition-all duration-700 ease-in-out
           ${isLoaded ? 'translate-y-0 md:translate-x-0 opacity-100' : 'translate-y-full md:translate-x-full opacity-0'}
         `}
-        style={{ willChange: 'transform, opacity' }}
       >
         <div
           className={`
@@ -202,7 +195,6 @@ export default function LoginPage() {
             transition-all duration-500 ease-out delay-100
             ${isLoaded ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'}
           `}
-          style={{ willChange: 'transform, opacity' }}
         >
           <Image
             src="/image/ParkD.png"
@@ -219,7 +211,6 @@ export default function LoginPage() {
             transition-all duration-500 ease-out delay-100
             ${isLoaded ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'}
           `}
-          style={{ willChange: 'transform, opacity' }}
         >
           Login
         </h2>
@@ -231,7 +222,6 @@ export default function LoginPage() {
             transition-all duration-500 ease-out delay-200
             ${isLoaded ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'}
           `}
-          style={{ willChange: 'transform, opacity' }}
         >
           {errorMessage && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -259,7 +249,6 @@ export default function LoginPage() {
                 transition-all duration-300 ease-in-out
                 group-hover:bg-gray-50
               "
-              style={{ willChange: 'background-color, box-shadow' }}
             />
             <span
               className={`
@@ -267,7 +256,6 @@ export default function LoginPage() {
                 transition-all duration-300 ease-in-out
                 group-hover:text-[#5B7CFF] group-hover:scale-110
               `}
-              style={{ willChange: 'transform, color' }}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -289,7 +277,6 @@ export default function LoginPage() {
                 transition-all duration-300 ease-in-out
                 group-hover:bg-gray-50
               "
-              style={{ willChange: 'background-color, box-shadow' }}
             />
             <span
               className={`
@@ -297,7 +284,6 @@ export default function LoginPage() {
                 transition-all duration-300 ease-in-out
                 group-hover:text-[#5B7CFF] group-hover:scale-110
               `}
-              style={{ willChange: 'transform, color' }}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -326,7 +312,6 @@ export default function LoginPage() {
               disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100
               transition-all duration-300 ease-in-out
             "
-            style={{ willChange: 'transform, background-color, box-shadow' }}
           >
             {isSubmitting ? 'Logging in...' : 'Login'}
           </button>
@@ -339,7 +324,6 @@ export default function LoginPage() {
             transition-all duration-500 ease-out delay-300
             ${isLoaded ? 'opacity-100' : 'opacity-0'}
           `}
-          style={{ willChange: 'opacity' }}
         >
         </div>
 
@@ -349,12 +333,9 @@ export default function LoginPage() {
             flex gap-4 mt-6
             transition-all duration-500 ease-out delay-400
             ${isLoaded ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'}
-          `}
-          style={{ willChange: 'transform, opacity' }}
-        >          
+          `}>
         </div>
       </div>
     </div>
   );
 }
-
