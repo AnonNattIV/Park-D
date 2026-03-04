@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Tabbar from '@/components/Tabbar';
-import { hasStoredAuth } from '@/lib/auth-client';
 
 type Review = { score: number; comment: string; username: string };
 type Lot = {
@@ -22,7 +21,6 @@ type ParkingData = {
   rules?: string[];
 };
 
-// สีสำหรับ Avatar สลับกันไปเรื่อยๆ
 const avatarGradients = [
   "from-[#5B7CFF] to-[#4a7bff]",
   "from-pink-500 to-rose-500",
@@ -38,10 +36,11 @@ export default function ParkingDetailPage() {
   const [data, setData] = useState<ParkingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  // TODO: นำค่า isAuthenticated ตัวจริงของคุณจาก Auth Context หรือ State มาใส่แทนที่นี่
+  const isAuthenticated = true; 
 
   useEffect(() => {
-    setIsAuthenticated(hasStoredAuth());
     if (!id) return;
     fetch(`/api/parking-lots/parkingdetail/${id}`)
       .then(r => { if(!r.ok) throw new Error(r.statusText); return r.json(); })
@@ -79,12 +78,10 @@ export default function ParkingDetailPage() {
 
   const { lot, reviews } = data;
 
-  // คำนวณคะแนนเฉลี่ย
   const avgScore = reviews.length > 0 
     ? Math.round(reviews.reduce((acc, curr) => acc + curr.score, 0) / reviews.length) 
     : 0;
 
-  // ฟังก์ชันสำหรับ Render ดาว
   const renderStars = (score: number) => {
     return (
       <div className="flex text-yellow-400 text-sm">
@@ -96,7 +93,8 @@ export default function ParkingDetailPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    // เพิ่ม pb-28 เพื่อให้มีช่องว่างด้านล่าง ไม่ให้แถบจองไปบังเนื้อหา
+    <div className="min-h-screen bg-gray-50 pb-28 relative">
       <Tabbar />
       <div className="mx-auto max-w-6xl p-6">
         {/* Back Button */}
@@ -105,12 +103,7 @@ export default function ParkingDetailPage() {
             href="/"
             className="inline-flex items-center gap-2 text-gray-600 transition-colors hover:text-[#5B7CFF]"
           >
-            <svg
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
             <span>กลับหน้าแรก</span>
@@ -133,7 +126,7 @@ export default function ParkingDetailPage() {
 
             {/* Parking Name Card */}
             <div className="rounded-2xl bg-white p-6 shadow-md">
-              <h1 className="mb-4 text-3xl font-bold text-gray-800">{lot.location || "ชื่อที่จอดรถ"}</h1>
+              <h1 className="mb-4 text-3xl font-bold text-gray-800">{lot.location || "ชื่อสถานที่จอดรถ"}</h1>
               <div className="flex items-center gap-2">
                 {renderStars(avgScore)}
                 <span className="text-sm text-gray-500">({reviews.length} รีวิว)</span>
@@ -144,23 +137,10 @@ export default function ParkingDetailPage() {
             <div className="rounded-2xl bg-white p-6 shadow-md">
               <h2 className="mb-3 text-xl font-bold text-gray-800">รายละเอียด</h2>
               <div className="mb-4 flex flex-wrap gap-4">
-                {/* ←ซ่อนราคาถ้าไม่ได้ login */}
-            {isAuthenticated ? (
-              <div className="rounded-lg bg-blue-50 px-4 py-2 text-blue-700">
-                <span className="block text-xs font-semibold uppercase opacity-70">ราคา</span>
-                <span className="text-lg font-bold">{lot.price} บาท/ชม.</span>
-              </div>
-            ) : (
-              <div className="rounded-lg bg-gray-100 px-4 py-2 text-gray-500">
-                <span className="block text-xs font-semibold uppercase opacity-70">ราคา</span>
-                <span className="text-lg font-bold">
-                  <Link href="/login" className="text-blue-600 hover:underline">
-                    เข้าสู่ระบบ
-                  </Link>
-                  เพื่อดูราคา
-                </span>
-              </div>
-            )}
+                <div className="rounded-lg bg-blue-50 px-4 py-2 text-blue-700">
+                  <span className="block text-xs font-semibold uppercase opacity-70">ราคา</span>
+                  <span className="text-lg font-bold">{lot.price} บาท/ชม.</span>
+                </div>
                 <div className="rounded-lg bg-green-50 px-4 py-2 text-green-700">
                   <span className="block text-xs font-semibold uppercase opacity-70">สถานะ</span>
                   <span className="text-lg font-bold">ว่าง {lot.total_slot} ที่</span>
@@ -256,6 +236,29 @@ export default function ParkingDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* แถบจอดรถด้านล่าง (แสดงเฉพาะตอน Login) */}
+      {isAuthenticated && (
+        <div className="fixed bottom-0 left-0 w-full bg-[#EBF0FF] py-4 px-6 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] border-t border-blue-100 z-50">
+          <div className="max-w-6xl mx-auto flex items-center justify-between">
+            {/* ซ้ายมือ (เว้นว่างไว้ก่อนตามที่แจ้ง) */}
+            <div></div>
+
+            {/* ขวามือ */}
+            <div className="flex flex-col items-end gap-2 md:flex-row md:items-center md:gap-6">
+              <div className="text-xl font-bold text-gray-800">
+                Total : {lot.price} บาท
+              </div>
+              <Link
+                href={`/booking/${id}`}
+                className="bg-[#5B7CFF] hover:bg-[#4a6bef] text-white font-bold py-3 px-10 rounded-lg transition-colors shadow-sm"
+              >
+                จอง
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
