@@ -65,6 +65,12 @@ export interface ParkingLotSystemRow {
   longitude: number | null;
 }
 
+export interface ParkingLotDetail {
+  lot: RowDataPacket;
+  reviews: Array<{ score: number; comment: string; username: string }>;
+  // vehicleTypes, rules, images … // จะเติมเมื่อ spec ชัด
+}
+
 const occupiedBookingStatuses = [
   'PENDING',
   'APPROVED_BY_OWNER',
@@ -266,4 +272,32 @@ export async function listParkingLotSystemRows(
       longitude: row.longitude === null ? null : Number(row.longitude),
     };
   });
+
+  
+}
+
+export async function getParkingLotDetail(lotId: number): Promise<ParkingLotDetail | null> {
+  const pool = getPool();
+  const [lotRows] = await pool.query<RowDataPacket[]>(
+    'SELECT lot_id, description, location, price, total_slot, /* … */ ' +
+    'FROM parking_lots WHERE lot_id = ?',
+    [lotId]
+  );
+  if (lotRows.length === 0) return null;
+  const lot = lotRows[0];
+
+  const [revRows] = await pool.query<RowDataPacket[]>(
+    `SELECT r.score, r.comment, u.username
+     FROM reviews r
+     JOIN bookings b ON b.b_id = r.b_id
+     JOIN users u ON u.user_id = b.user_id
+     WHERE b.lot_id = ?`,
+    [lotId]
+  );
+
+  return {
+    lot,
+    reviews: revRows as any,
+    // TODO: vehicleTypes, rules, images
+  };
 }

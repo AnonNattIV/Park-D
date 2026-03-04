@@ -268,7 +268,7 @@ export default function ParkingHomePage({
             {parkingLots.map((lot) => (
               <Link
                 key={lot.id}
-                href="/parkingdetail"
+                href={`/parkingdetail/${lot.id}`}
                 className="group cursor-pointer overflow-hidden rounded-3xl bg-white shadow-lg transition-all duration-300
                   hover:shadow-xl hover:scale-[1.02]"
               >
