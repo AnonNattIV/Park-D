@@ -5,11 +5,18 @@ interface OwnerStatProps {
 }
 
 export default function OwnerStatCard({ title, value, unit }: OwnerStatProps) {
+  const formattedValue = Number.isFinite(value)
+    ? value.toLocaleString('th-TH', {
+        minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+        maximumFractionDigits: Number.isInteger(value) ? 0 : 2,
+      })
+    : '-';
+
   return (
     <div className="bg-white rounded-xl shadow-md p-6 hover:shadow-lg transition-all duration-200">
       <h3 className="text-gray-600 text-sm font-medium mb-2">{title}</h3>
       <div className="flex items-baseline justify-center gap-1">
-        <span className="text-4xl font-bold text-[#5B7CFF]">{value}</span>
+        <span className="text-4xl font-bold text-[#5B7CFF]">{formattedValue}</span>
         {unit && <span className="text-gray-500 text-lg">{unit}</span>}
       </div>
     </div>

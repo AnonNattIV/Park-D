@@ -69,22 +69,29 @@ function getFileExtension(filename: string, contentType: string): string {
   return 'jpg';
 }
 
-export function buildProfileImageUrl(objectKey: string): string {
-  const encodedKey = objectKey
+function encodeObjectKey(objectKey: string): string {
+  return objectKey
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/');
-
-  return `/api/profile-image/${encodedKey}`;
 }
 
-export function extractProfileImageKey(imageUrl: string | null | undefined): string | null {
-  if (!imageUrl) {
-    return null;
-  }
+function decodeObjectKey(encodedKey: string): string {
+  return encodedKey
+    .split('/')
+    .map((segment) => decodeURIComponent(segment))
+    .join('/');
+}
 
-  const prefix = '/api/profile-image/';
-  if (!imageUrl.startsWith(prefix)) {
+function buildObjectProxyUrl(prefix: string, objectKey: string): string {
+  return `${prefix}/${encodeObjectKey(objectKey)}`;
+}
+
+function extractObjectKeyByPrefix(
+  imageUrl: string | null | undefined,
+  prefix: string
+): string | null {
+  if (!imageUrl || !imageUrl.startsWith(prefix)) {
     return null;
   }
 
@@ -93,19 +100,12 @@ export function extractProfileImageKey(imageUrl: string | null | undefined): str
     return null;
   }
 
-  return encodedKey
-    .split('/')
-    .map((segment) => decodeURIComponent(segment))
-    .join('/');
+  return decodeObjectKey(encodedKey);
 }
 
-export async function uploadProfileImage(file: File, userId: number): Promise<string> {
+async function uploadObjectByKey(file: File, objectKey: string): Promise<void> {
   const { bucketName, client } = getStorageConfig();
   const contentType = file.type || 'application/octet-stream';
-  const extension = getFileExtension(file.name, contentType);
-  const objectKey = `profiles/${userId}/${Date.now()}-${sanitizeFilename(
-    file.name || `upload.${extension}`
-  )}`;
   const body = Buffer.from(await file.arrayBuffer());
 
   await client.send(
@@ -117,19 +117,14 @@ export async function uploadProfileImage(file: File, userId: number): Promise<st
       ContentLength: body.length,
     })
   );
-
-  return buildProfileImageUrl(objectKey);
 }
 
-export async function deleteProfileImageByUrl(
-  imageUrl: string | null | undefined
-): Promise<void> {
-  const { bucketName, client } = getStorageConfig();
-  const objectKey = extractProfileImageKey(imageUrl);
+async function deleteObjectByKey(objectKey: string | null): Promise<void> {
   if (!objectKey) {
     return;
   }
 
+  const { bucketName, client } = getStorageConfig();
   await client.send(
     new DeleteObjectCommand({
       Bucket: bucketName,
@@ -138,7 +133,7 @@ export async function deleteProfileImageByUrl(
   );
 }
 
-export async function getProfileImageByKey(objectKey: string): Promise<{
+async function getObjectByKey(objectKey: string): Promise<{
   body: Uint8Array;
   contentType: string;
 }> {
@@ -158,4 +153,111 @@ export async function getProfileImageByKey(objectKey: string): Promise<{
     body: await response.Body.transformToByteArray(),
     contentType: response.ContentType || 'application/octet-stream',
   };
+}
+
+export function buildProfileImageUrl(objectKey: string): string {
+  return buildObjectProxyUrl('/api/profile-image', objectKey);
+}
+
+export function extractProfileImageKey(imageUrl: string | null | undefined): string | null {
+  return extractObjectKeyByPrefix(imageUrl, '/api/profile-image/');
+}
+
+export async function uploadProfileImage(file: File, userId: number): Promise<string> {
+  const contentType = file.type || 'application/octet-stream';
+  const extension = getFileExtension(file.name, contentType);
+  const objectKey = `profiles/${userId}/${Date.now()}-${sanitizeFilename(
+    file.name || `upload.${extension}`
+  )}`;
+  await uploadObjectByKey(file, objectKey);
+
+  return buildProfileImageUrl(objectKey);
+}
+
+export async function deleteProfileImageByUrl(
+  imageUrl: string | null | undefined
+): Promise<void> {
+  const objectKey = extractProfileImageKey(imageUrl);
+  await deleteObjectByKey(objectKey);
+}
+
+export async function getProfileImageByKey(objectKey: string): Promise<{
+  body: Uint8Array;
+  contentType: string;
+}> {
+  return getObjectByKey(objectKey);
+}
+
+export function buildPaymentProofUrl(objectKey: string): string {
+  return buildObjectProxyUrl('/api/payment-proof', objectKey);
+}
+
+export function extractPaymentProofKey(imageUrl: string | null | undefined): string | null {
+  return extractObjectKeyByPrefix(imageUrl, '/api/payment-proof/');
+}
+
+export async function uploadPaymentProof(
+  file: File,
+  userId: number,
+  bookingId: number
+): Promise<string> {
+  const contentType = file.type || 'application/octet-stream';
+  const extension = getFileExtension(file.name, contentType);
+  const objectKey = `payments/${userId}/${bookingId}/${Date.now()}-${sanitizeFilename(
+    file.name || `proof.${extension}`
+  )}`;
+
+  await uploadObjectByKey(file, objectKey);
+  return buildPaymentProofUrl(objectKey);
+}
+
+export async function deletePaymentProofByUrl(
+  imageUrl: string | null | undefined
+): Promise<void> {
+  const objectKey = extractPaymentProofKey(imageUrl);
+  await deleteObjectByKey(objectKey);
+}
+
+export async function getPaymentProofByKey(objectKey: string): Promise<{
+  body: Uint8Array;
+  contentType: string;
+}> {
+  return getObjectByKey(objectKey);
+}
+
+export function buildCheckinProofUrl(objectKey: string): string {
+  return buildObjectProxyUrl('/api/checkin-proof', objectKey);
+}
+
+export function extractCheckinProofKey(imageUrl: string | null | undefined): string | null {
+  return extractObjectKeyByPrefix(imageUrl, '/api/checkin-proof/');
+}
+
+export async function uploadCheckinProof(
+  file: File,
+  userId: number,
+  bookingId: number
+): Promise<string> {
+  const contentType = file.type || 'application/octet-stream';
+  const extension = getFileExtension(file.name, contentType);
+  const objectKey = `checkins/${userId}/${bookingId}/${Date.now()}-${sanitizeFilename(
+    file.name || `checkin.${extension}`
+  )}`;
+
+  await uploadObjectByKey(file, objectKey);
+  return buildCheckinProofUrl(objectKey);
+}
+
+export async function deleteCheckinProofByUrl(
+  imageUrl: string | null | undefined
+): Promise<void> {
+  const objectKey = extractCheckinProofKey(imageUrl);
+  await deleteObjectByKey(objectKey);
+}
+
+export async function getCheckinProofByKey(objectKey: string): Promise<{
+  body: Uint8Array;
+  contentType: string;
+}> {
+  return getObjectByKey(objectKey);
 }

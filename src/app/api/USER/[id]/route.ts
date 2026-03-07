@@ -3,6 +3,8 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import getPool from '@/lib/db/mysql';
 import { verifyToken } from '@/lib/auth';
 import { OwnerRequestStatus, resolveAppRole } from '@/lib/roles';
+import { ensureWalletTables, getUserWalletWithTransactions } from '@/lib/wallet';
+import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
 
 type PatchAction = 'REQUEST_OWNER' | 'APPROVE_OWNER' | 'REJECT_OWNER';
 const GENDER_OPTIONS = ['Male', 'Female', 'Other'] as const;
@@ -40,8 +42,12 @@ interface BookingHistoryRow extends RowDataPacket {
   checkin_datetime: Date | string | null;
   checkin_proof: string | null;
   checkout_datetime: Date | string | null;
+  b_status: string;
   total_time_minutes: number | null;
   total_price: number | string | null;
+  pay_status: string | null;
+  pay_method: string | null;
+  pay_amount: number | string | null;
 }
 
 function parseUserId(rawId: string): number | null {
@@ -144,13 +150,20 @@ async function getBookingHistory(userId: number) {
       b.checkin_datetime,
       b.checkin_proof,
       b.checkout_datetime,
+      b.b_status,
       b.total_time_minutes,
       CASE
+        WHEN p.pay_amount IS NOT NULL THEN p.pay_amount
         WHEN b.total_time_minutes IS NULL THEN NULL
-        ELSE ROUND((b.total_time_minutes / 60) * pl.price, 2)
+        ELSE ROUND((b.total_time_minutes / 60) * pl.price * 1.5, 2)
       END AS total_price
+      ,
+      p.pay_status,
+      p.pay_method,
+      p.pay_amount
     FROM bookings b
     INNER JOIN parking_lots pl ON pl.lot_id = b.lot_id
+    LEFT JOIN payments p ON p.b_id = b.b_id
     WHERE b.user_id = ?
     ORDER BY b.booking_time DESC
     LIMIT 10`,
@@ -164,9 +177,35 @@ async function getBookingHistory(userId: number) {
     checkinTime: row.checkin_datetime,
     checkinProof: row.checkin_proof,
     checkoutTime: row.checkout_datetime,
+    bookingStatus: row.b_status,
     durationMinutes: row.total_time_minutes,
     totalPrice: row.total_price === null ? 0 : Number(row.total_price),
+    paymentStatus: row.pay_status,
+    paymentMethod: row.pay_method,
+    paymentAmount: row.pay_amount === null ? null : Number(row.pay_amount),
   }));
+}
+
+async function getWalletSummary(userId: number) {
+  const pool = getPool();
+  await ensureWalletTables(pool);
+
+  const wallet = await getUserWalletWithTransactions(pool, userId, 20);
+  return {
+    id: wallet.walletId,
+    balance: wallet.balance,
+    transactions: wallet.transactions.map((item) => ({
+      id: item.id,
+      type: item.type,
+      amount: item.amount,
+      balanceBefore: item.balanceBefore,
+      balanceAfter: item.balanceAfter,
+      note: item.note,
+      bookingId: item.bookingId,
+      paymentId: item.paymentId,
+      createdAt: item.createdAt,
+    })),
+  };
 }
 
 async function emailExistsForAnotherUser(email: string, userId: number): Promise<boolean> {
@@ -208,6 +247,12 @@ export async function GET(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    try {
+      await runBookingCheckoutAutomation();
+    } catch (automationError) {
+      console.error('Unable to run booking checkout automation:', automationError);
+    }
+
     const user = await getUserById(userId);
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
@@ -217,6 +262,7 @@ export async function GET(
       success: true,
       user: buildUserResponse(user),
       bookings: await getBookingHistory(userId),
+      wallet: await getWalletSummary(userId),
     });
   } catch (error) {
     console.error('Get user error:', error);

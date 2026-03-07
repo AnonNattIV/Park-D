@@ -6,6 +6,9 @@ interface BookingHistory {
   endTime: string;
   duration: string;
   totalPrice: number;
+  bookingStatus?: string;
+  paymentStatus?: string | null;
+  paymentMethod?: string | null;
 }
 
 interface BookingHistoryCardProps {
@@ -13,6 +16,14 @@ interface BookingHistoryCardProps {
 }
 
 export default function BookingHistoryCard({ booking }: BookingHistoryCardProps) {
+  const normalizedStatus = booking.paymentStatus?.toUpperCase() || 'UNPAID';
+  const statusClassName =
+    normalizedStatus === 'PAID'
+      ? 'bg-emerald-100 text-emerald-700'
+      : normalizedStatus === 'PENDING'
+        ? 'bg-amber-100 text-amber-700'
+        : 'bg-slate-100 text-slate-600';
+
   return (
     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 p-5 bg-gray-50 rounded-xl shadow-md hover:shadow-lg hover:scale-[1.01] transition-all duration-200">
       {/* Left Side - Booking Details */}
@@ -27,6 +38,16 @@ export default function BookingHistoryCard({ booking }: BookingHistoryCardProps)
         <p className="text-sm text-gray-600">
           <span className="font-medium">ระยะเวลา:</span> {booking.duration}
         </p>
+        <p className="text-sm text-gray-600">
+          <span className="font-medium">Booking:</span> {booking.bookingStatus || '-'}
+        </p>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="font-medium text-gray-600">Payment:</span>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusClassName}`}>
+            {normalizedStatus}
+          </span>
+          <span className="text-gray-500">{booking.paymentMethod || '-'}</span>
+        </div>
       </div>
 
       {/* Right Side - Price */}

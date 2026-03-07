@@ -24,6 +24,8 @@ interface ParkingForm {
   longitude: string;
   totalSlots: number;
   pricePerHour: number;
+  vehicleTypesText: string;
+  rulesText: string;
   description: string;
   images: File[];
 }
@@ -37,21 +39,8 @@ interface ParkingLotCreateResponse {
 type FormField = keyof Omit<ParkingForm, 'images'>;
 type PinSource = 'none' | 'gps' | 'address' | 'manual';
 
-function parseCoordinateInput(value: string): number | null {
-  const normalized = value.trim();
-  if (!normalized) {
-    return null;
-  }
-
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-export default function ParkingSpacePage() {
-  const router = useRouter();
-  const [isReady, setIsReady] = useState(false);
-  const [token, setToken] = useState('');
-  const [formData, setFormData] = useState<ParkingForm>({
+function createInitialFormData(): ParkingForm {
+  return {
     name: '',
     addressLine: '',
     streetNumber: '',
@@ -63,9 +52,41 @@ export default function ParkingSpacePage() {
     longitude: '',
     totalSlots: 1,
     pricePerHour: 0,
+    vehicleTypesText: '',
+    rulesText: '',
     description: '',
     images: [],
-  });
+  };
+}
+
+function parseCoordinateInput(value: string): number | null {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseListField(value: string): string[] {
+  const uniqueValues = new Set<string>();
+
+  value
+    .split('\n')
+    .flatMap((line) => line.split(','))
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .forEach((item) => uniqueValues.add(item));
+
+  return Array.from(uniqueValues);
+}
+
+export default function ParkingSpacePage() {
+  const router = useRouter();
+  const [isReady, setIsReady] = useState(false);
+  const [token, setToken] = useState('');
+  const [formData, setFormData] = useState<ParkingForm>(createInitialFormData);
   const [errors, setErrors] = useState<Partial<Record<FormField, string>>>({});
   const [submitError, setSubmitError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -123,7 +144,7 @@ export default function ParkingSpacePage() {
     setPinSource(source);
 
     if (source === 'manual') {
-      // Stop any in-flight auto geocode so manual pin stays in control.
+      // Stop in-flight auto geocode so manual pin selection stays stable.
       locateRequestIdRef.current += 1;
       setIsAutoLocating(false);
     }
@@ -197,12 +218,15 @@ export default function ParkingSpacePage() {
     setFormData((prev) => ({ ...prev, images }));
   };
 
-  const handleMapCoordinateChange = useCallback((latitude: number, longitude: number) => {
-    if (isPinLocked) {
-      return;
-    }
-    setCoordinates(latitude, longitude, 'manual');
-  }, [setCoordinates, isPinLocked]);
+  const handleMapCoordinateChange = useCallback(
+    (latitude: number, longitude: number) => {
+      if (isPinLocked) {
+        return;
+      }
+      setCoordinates(latitude, longitude, 'manual');
+    },
+    [setCoordinates, isPinLocked]
+  );
 
   const handleLocateByAddress = useCallback(async () => {
     const addressSegments = [
@@ -221,23 +245,21 @@ export default function ParkingSpacePage() {
     }
 
     const query = [...addressSegments, 'Thailand'].join(', ');
-
     const requestId = ++locateRequestIdRef.current;
+
     setLocateError('');
     setIsAutoLocating(true);
 
     try {
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(
-          query
-        )}`,
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`,
         {
           method: 'GET',
         }
       );
 
       if (!response.ok) {
-        throw new Error('ไม่สามารถค้นหาตำแหน่งบนแผนที่ได้ในขณะนี้');
+        throw new Error('Unable to locate pin by address');
       }
 
       const result = (await response.json()) as Array<{ lat: string; lon: string }>;
@@ -256,15 +278,11 @@ export default function ParkingSpacePage() {
         throw new Error('Invalid coordinate response from map service.');
       }
 
-      setCoordinates(
-        Number(nextLatitude.toFixed(7)),
-        Number(nextLongitude.toFixed(7)),
-        'address'
-      );
+      setCoordinates(Number(nextLatitude.toFixed(7)), Number(nextLongitude.toFixed(7)), 'address');
     } catch (error) {
       console.error('Locate by address error:', error);
       if (requestId === locateRequestIdRef.current) {
-        setLocateError('ไม่สามารถค้นหาพิกัดอัตโนมัติได้ในขณะนี้');
+        setLocateError('ไม่สามารถค้นหาพิกัดจากที่อยู่ได้ กรุณาปักหมุดบนแผนที่ด้วยตนเอง');
       }
     } finally {
       if (requestId === locateRequestIdRef.current) {
@@ -329,7 +347,7 @@ export default function ParkingSpacePage() {
     const newErrors: Partial<Record<FormField, string>> = {};
 
     if (!formData.name.trim()) {
-      newErrors.name = 'กรุณากรอกชื่อพื้นที่';
+      newErrors.name = 'กรุณากรอกชื่อพื้นที่จอดรถ';
     }
 
     if (!formData.addressLine.trim()) {
@@ -341,15 +359,15 @@ export default function ParkingSpacePage() {
     }
 
     if (!formData.district.trim()) {
-      newErrors.district = 'กรุณากรอกเขต/อำเภอ';
+      newErrors.district = 'กรุณากรอกเขต';
     }
 
     if (!formData.amphoe.trim()) {
-      newErrors.amphoe = 'กรุณากรอกแขวง/ตำบล';
+      newErrors.amphoe = 'กรุณากรอกอำเภอ';
     }
 
     if (!formData.subdistrict.trim()) {
-      newErrors.subdistrict = 'กรุณากรอกชุมชน/หมู่บ้าน';
+      newErrors.subdistrict = 'กรุณากรอกแขวง/ตำบล';
     }
 
     if (!formData.province.trim()) {
@@ -360,13 +378,13 @@ export default function ParkingSpacePage() {
     const longitude = Number(formData.longitude);
 
     if (!formData.latitude.trim()) {
-      newErrors.latitude = 'กรุณาปักหมุดเพื่อระบุละติจูด';
+      newErrors.latitude = 'กรุณาเลือกพิกัดบนแผนที่';
     } else if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
       newErrors.latitude = 'ละติจูดต้องอยู่ระหว่าง -90 ถึง 90';
     }
 
     if (!formData.longitude.trim()) {
-      newErrors.longitude = 'กรุณาปักหมุดเพื่อระบุลองจิจูด';
+      newErrors.longitude = 'กรุณาเลือกพิกัดบนแผนที่';
     } else if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
       newErrors.longitude = 'ลองจิจูดต้องอยู่ระหว่าง -180 ถึง 180';
     }
@@ -410,6 +428,8 @@ export default function ParkingSpacePage() {
           longitude: Number(formData.longitude),
           totalSlot: formData.totalSlots,
           price: formData.pricePerHour,
+          vehicleTypes: parseListField(formData.vehicleTypesText),
+          rules: parseListField(formData.rulesText),
           description: formData.description,
         }),
       });
@@ -423,31 +443,20 @@ export default function ParkingSpacePage() {
       }
 
       if (!response.ok) {
-        throw new Error(result.error || 'ไม่สามารถส่งคำขอพื้นที่จอดรถได้');
+        throw new Error(result.error || 'ไม่สามารถส่งคำขอเพิ่มที่จอดรถได้ในขณะนี้');
       }
 
-      setFormData({
-        name: '',
-        addressLine: '',
-        streetNumber: '',
-        district: '',
-        amphoe: '',
-        subdistrict: '',
-        province: '',
-        latitude: '',
-        longitude: '',
-        totalSlots: 1,
-        pricePerHour: 0,
-        description: '',
-        images: [],
-      });
-
-      alert(result.message || 'ส่งคำขอพื้นที่จอดรถเรียบร้อยแล้ว');
+      setFormData(createInitialFormData());
+      setPinSource('none');
+      setIsPinLocked(false);
+      alert(result.message || 'ส่งคำขอเพิ่มที่จอดรถเรียบร้อยแล้ว');
       router.push('/owner/home');
     } catch (error) {
       console.error('Parking lot request submit error:', error);
       setSubmitError(
-        error instanceof Error ? error.message : 'ไม่สามารถส่งคำขอพื้นที่จอดรถได้ในขณะนี้'
+        error instanceof Error
+          ? error.message
+          : 'ไม่สามารถส่งคำขอเพิ่มที่จอดรถได้ในขณะนี้'
       );
     } finally {
       setIsSubmitting(false);
@@ -475,7 +484,7 @@ export default function ParkingSpacePage() {
             disabled={isSubmitting}
             className="w-full rounded-xl bg-blue-600 py-3 font-medium text-white transition-all duration-200 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {isSubmitting ? 'กำลังส่งคำขอ...' : 'ส่งคำขอเพื่อรออนุมัติ'}
+            {isSubmitting ? 'กำลังส่งข้อมูล...' : 'ส่งคำขออนุมัติ'}
           </button>
         </div>
       </div>
@@ -489,7 +498,7 @@ export default function ParkingSpacePage() {
             <ArrowLeftIcon className="h-5 w-5" />
             <span>กลับ</span>
           </button>
-          <h1 className="text-2xl font-bold text-gray-800">เพิ่มพื้นที่ปล่อยเช่า</h1>
+          <h1 className="text-2xl font-bold text-gray-800">สร้างพื้นที่จอดรถ</h1>
         </div>
 
         <div className="space-y-6 rounded-xl bg-white p-8 shadow-md">
@@ -500,7 +509,9 @@ export default function ParkingSpacePage() {
           ) : null}
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">ชื่อพื้นที่ <span className="text-red-500">*</span></label>
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              ชื่อ <span className="text-red-500">*</span>
+            </label>
             <input
               type="text"
               value={formData.name}
@@ -508,13 +519,15 @@ export default function ParkingSpacePage() {
               className={`w-full rounded-lg border bg-white px-4 py-3 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 errors.name ? 'border-red-500 focus:border-red-500' : 'border-gray-200 focus:border-blue-500'
               }`}
-              placeholder="ชื่อพื้นที่จอดรถ"
+              placeholder="ชื่อสถานที่จอดรถ"
             />
             {errors.name ? <p className="mt-1 text-xs text-red-500">{errors.name}</p> : null}
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">ที่อยู่ <span className="text-red-500">*</span></label>
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              ที่อยู่ <span className="text-red-500">*</span>
+            </label>
             <input
               type="text"
               value={formData.addressLine}
@@ -522,13 +535,15 @@ export default function ParkingSpacePage() {
               className={`w-full rounded-lg border bg-white px-4 py-3 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 errors.addressLine ? 'border-red-500 focus:border-red-500' : 'border-gray-200 focus:border-blue-500'
               }`}
-              placeholder="รายละเอียดที่อยู่"
+              placeholder="ที่อยู่"
             />
             {errors.addressLine ? <p className="mt-1 text-xs text-red-500">{errors.addressLine}</p> : null}
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">เลขที่ <span className="text-red-500">*</span></label>
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              เลขที่ <span className="text-red-500">*</span>
+            </label>
             <input
               type="text"
               value={formData.streetNumber}
@@ -536,14 +551,16 @@ export default function ParkingSpacePage() {
               className={`w-full rounded-lg border bg-white px-4 py-3 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 errors.streetNumber ? 'border-red-500 focus:border-red-500' : 'border-gray-200 focus:border-blue-500'
               }`}
-              placeholder="เลขที่บ้าน/อาคาร"
+              placeholder="เลขที่อาคาร/บ้าน"
             />
             {errors.streetNumber ? <p className="mt-1 text-xs text-red-500">{errors.streetNumber}</p> : null}
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">เขต/อำเภอ <span className="text-red-500">*</span></label>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                เขต <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={formData.district}
@@ -551,13 +568,15 @@ export default function ParkingSpacePage() {
                 className={`w-full rounded-lg border bg-white px-4 py-3 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                   errors.district ? 'border-red-500 focus:border-red-500' : 'border-gray-200 focus:border-blue-500'
                 }`}
-                placeholder="กรอกเขตหรืออำเภอ"
+                placeholder="เขต"
               />
               {errors.district ? <p className="mt-1 text-xs text-red-500">{errors.district}</p> : null}
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">แขวง/ตำบล <span className="text-red-500">*</span></label>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                อำเภอ <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={formData.amphoe}
@@ -565,7 +584,7 @@ export default function ParkingSpacePage() {
                 className={`w-full rounded-lg border bg-white px-4 py-3 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                   errors.amphoe ? 'border-red-500 focus:border-red-500' : 'border-gray-200 focus:border-blue-500'
                 }`}
-                placeholder="กรอกแขวงหรือตำบล"
+                placeholder="อำเภอ"
               />
               {errors.amphoe ? <p className="mt-1 text-xs text-red-500">{errors.amphoe}</p> : null}
             </div>
@@ -573,7 +592,9 @@ export default function ParkingSpacePage() {
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">ชุมชน/หมู่บ้าน <span className="text-red-500">*</span></label>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                แขวง/ตำบล <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={formData.subdistrict}
@@ -581,13 +602,15 @@ export default function ParkingSpacePage() {
                 className={`w-full rounded-lg border bg-white px-4 py-3 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                   errors.subdistrict ? 'border-red-500 focus:border-red-500' : 'border-gray-200 focus:border-blue-500'
                 }`}
-                placeholder="กรอกชุมชนหรือหมู่บ้าน (ถ้ามี)"
+                placeholder="แขวง/ตำบล"
               />
               {errors.subdistrict ? <p className="mt-1 text-xs text-red-500">{errors.subdistrict}</p> : null}
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">จังหวัด <span className="text-red-500">*</span></label>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                จังหวัด <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={formData.province}
@@ -595,7 +618,7 @@ export default function ParkingSpacePage() {
                 className={`w-full rounded-lg border bg-white px-4 py-3 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                   errors.province ? 'border-red-500 focus:border-red-500' : 'border-gray-200 focus:border-blue-500'
                 }`}
-                placeholder="กรอกจังหวัด"
+                placeholder="จังหวัด"
               />
               {errors.province ? <p className="mt-1 text-xs text-red-500">{errors.province}</p> : null}
             </div>
@@ -603,10 +626,11 @@ export default function ParkingSpacePage() {
 
           <div>
             <label className="mb-2 block text-sm font-medium text-gray-700">
-              ปักหมุดตำแหน่งบนแผนที่ <span className="text-red-500">*</span>
+              ตำแหน่งปักหมุด <span className="text-red-500">*</span>
             </label>
             <p className="mb-3 text-xs text-gray-500">
-              แผนที่เริ่มต้นที่กรุงเทพฯ และจะพยายามปักหมุดอัตโนมัติทันทีเมื่อคุณกรอกข้อมูลตำแหน่ง
+              แผนที่จะเริ่มต้นที่กรุงเทพฯ และพยายามค้นหาพิกัดจากข้อมูลที่อยู่โดยอัตโนมัติ
+              คุณสามารถลากหรือคลิกแผนที่เพื่อปรับหมุดให้แม่นยำได้
             </p>
 
             <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -618,7 +642,7 @@ export default function ParkingSpacePage() {
                 disabled={isGpsLocating || gpsStatus === 'unsupported'}
                 className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isGpsLocating ? 'Getting GPS location...' : 'Use current GPS pin'}
+                {isGpsLocating ? 'กำลังอ่านตำแหน่ง GPS...' : 'ใช้พิกัด GPS ปัจจุบัน'}
               </button>
 
               <button
@@ -631,11 +655,11 @@ export default function ParkingSpacePage() {
                     : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
                 }`}
               >
-                {isPinLocked ? 'Unlock pin' : 'Lock pin'}
+                {isPinLocked ? 'ปลดล็อกหมุด' : 'ล็อกหมุด'}
               </button>
 
               <span className="text-xs text-slate-500">
-                If GPS is not accurate, drag or click map to relocate pin.
+                หาก GPS ไม่แม่นยำ สามารถลากหรือคลิกแผนที่เพื่อย้ายหมุดได้
               </span>
               {numericLatitude !== null && numericLongitude !== null ? (
                 <span className="text-xs text-slate-600">
@@ -644,39 +668,37 @@ export default function ParkingSpacePage() {
               ) : null}
 
               {isAutoLocating ? (
-                <span className="text-xs text-slate-500">กำลังค้นหาพิกัดอัตโนมัติ...</span>
+                <span className="text-xs text-slate-500">กำลังค้นหาพิกัดจากที่อยู่...</span>
               ) : null}
-            
+
               {gpsStatus === 'prompting' ? (
-                <span className="text-xs text-slate-500">Requesting GPS permission...</span>
+                <span className="text-xs text-slate-500">กำลังขอสิทธิ์ใช้ GPS...</span>
               ) : null}
 
               {gpsStatus === 'granted' ? (
-                <span className="text-xs text-emerald-600">GPS location enabled.</span>
+                <span className="text-xs text-emerald-600">เปิดใช้งานตำแหน่ง GPS แล้ว</span>
               ) : null}
 
               {gpsStatus === 'denied' ? (
                 <span className="text-xs text-amber-600">
-                  GPS permission denied. Please enable location permission in your browser.
+                  ปฏิเสธสิทธิ์ GPS กรุณาเปิดสิทธิ์ตำแหน่งในเบราว์เซอร์
                 </span>
               ) : null}
 
               {gpsStatus === 'unsupported' ? (
-                <span className="text-xs text-amber-600">GPS is not supported in this browser.</span>
+                <span className="text-xs text-amber-600">เบราว์เซอร์นี้ไม่รองรับ GPS</span>
               ) : null}
 
               {gpsStatus === 'error' ? (
-                <span className="text-xs text-amber-600">Unable to read current GPS location.</span>
+                <span className="text-xs text-amber-600">ไม่สามารถอ่านตำแหน่ง GPS ปัจจุบันได้</span>
               ) : null}
 
               {isPinLocked ? (
-                <span className="text-xs text-emerald-700">Pin is locked.</span>
+                <span className="text-xs text-emerald-700">หมุดถูกล็อกอยู่</span>
               ) : null}
             </div>
 
-            {locateError ? (
-              <p className="mb-3 text-xs text-red-500">{locateError}</p>
-            ) : null}
+            {locateError ? <p className="mb-3 text-xs text-red-500">{locateError}</p> : null}
 
             <MapCoordinatePicker
               latitude={numericLatitude}
@@ -686,15 +708,15 @@ export default function ParkingSpacePage() {
             />
 
             {errors.latitude || errors.longitude ? (
-              <p className="mt-2 text-xs text-red-500">
-                {errors.latitude || errors.longitude}
-              </p>
+              <p className="mt-2 text-xs text-red-500">{errors.latitude || errors.longitude}</p>
             ) : null}
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">จำนวนช่องจอด <span className="text-red-500">*</span></label>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                จำนวนช่องจอด <span className="text-red-500">*</span>
+              </label>
               <input
                 type="number"
                 value={formData.totalSlots}
@@ -704,13 +726,15 @@ export default function ParkingSpacePage() {
                 className={`w-full rounded-lg border bg-white px-4 py-3 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                   errors.totalSlots ? 'border-red-500 focus:border-red-500' : 'border-gray-200 focus:border-blue-500'
                 }`}
-                placeholder="จำนวนช่องจอด"
+                placeholder="จำนวนช่องจอดทั้งหมด"
               />
               {errors.totalSlots ? <p className="mt-1 text-xs text-red-500">{errors.totalSlots}</p> : null}
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">ราคา <span className="text-red-500">*</span></label>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                ราคา <span className="text-red-500">*</span>
+              </label>
               <div className="relative">
                 <input
                   type="number"
@@ -723,20 +747,50 @@ export default function ParkingSpacePage() {
                   }`}
                   placeholder="ราคาต่อชั่วโมง"
                 />
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-500">THB</span>
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-500">
+                  THB
+                </span>
               </div>
               {errors.pricePerHour ? <p className="mt-1 text-xs text-red-500">{errors.pricePerHour}</p> : null}
             </div>
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">คำอธิบาย (ไม่บังคับ)</label>
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              ประเภทยานพาหนะที่รองรับ (ไม่บังคับ)
+            </label>
+            <textarea
+              value={formData.vehicleTypesText}
+              onChange={(e) => handleInputChange('vehicleTypesText', e.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all duration-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="กรอกทีละบรรทัดหรือคั่นด้วยเครื่องหมายจุลภาค เช่น รถยนต์, รถจักรยานยนต์"
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              กฎระเบียบ (ไม่บังคับ)
+            </label>
+            <textarea
+              value={formData.rulesText}
+              onChange={(e) => handleInputChange('rulesText', e.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all duration-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="กรอกทีละบรรทัดหรือคั่นด้วยเครื่องหมายจุลภาค"
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              รายละเอียดเพิ่มเติม (ไม่บังคับ)
+            </label>
             <textarea
               value={formData.description}
               onChange={(e) => handleInputChange('description', e.target.value)}
               rows={4}
               className="w-full resize-none rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all duration-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="รายละเอียดเพิ่มเติมของพื้นที่จอดรถ"
+              placeholder="เพิ่มรายละเอียดของที่จอดรถ..."
             />
           </div>
 
@@ -750,3 +804,4 @@ export default function ParkingSpacePage() {
     </div>
   );
 }
+

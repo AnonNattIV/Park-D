@@ -33,6 +33,7 @@ interface ParkingLotSystemDbRow extends RowDataPacket {
   province: string | null;
   latitude: number | string | null;
   longitude: number | string | null;
+  owner_income: number | string;
 }
 
 export interface HomeParkingLot {
@@ -65,6 +66,7 @@ export interface ParkingLotSystemRow {
   ownerName: string;
   latitude: number | null;
   longitude: number | null;
+  ownerIncome: number;
 }
 
 export interface ParkingLotDetail {
@@ -258,7 +260,19 @@ export async function listParkingLotSystemRows(
       pl.subdistrict,
       pl.province,
       pl.latitude,
-      pl.longitude
+      pl.longitude,
+      COALESCE((
+        SELECT ROUND(SUM(
+          (TIMESTAMPDIFF(MINUTE, b.checkin_datetime, b.checkout_datetime) / 60) * pl.price * 0.8
+        ), 2)
+        FROM bookings b
+        INNER JOIN payments p ON p.b_id = b.b_id
+        WHERE b.lot_id = pl.lot_id
+          AND b.checkin_datetime IS NOT NULL
+          AND b.checkout_datetime IS NOT NULL
+          AND b.b_status = 'CHECKOUT_APPROVED'
+          AND p.pay_status = 'PAID'
+      ), 0) AS owner_income
     FROM parking_lots pl
     INNER JOIN users u ON u.user_id = pl.owner_user_id${ownerClause}
     ORDER BY pl.created_at DESC, pl.lot_id DESC`,
@@ -284,6 +298,7 @@ export async function listParkingLotSystemRows(
       ownerName: row.owner_name,
       latitude: row.latitude === null ? null : Number(row.latitude),
       longitude: row.longitude === null ? null : Number(row.longitude),
+      ownerIncome: Number(row.owner_income || 0),
     };
   });
 

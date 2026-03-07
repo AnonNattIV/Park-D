@@ -1,6 +1,6 @@
 import { PencilIcon } from '@heroicons/react/24/outline';
 
-export type ParkingStatus = 'available' | 'occupied' | 'pending';
+export type ParkingStatus = 'available' | 'occupied' | 'pending' | 'closed';
 
 interface OwnerParkingProps {
   id: string;
@@ -9,21 +9,26 @@ interface OwnerParkingProps {
   onManage?: (id: string) => void;
 }
 
-const STATUS_CONFIG = {
+const STATUS_CONFIG: Record<ParkingStatus, { label: string; dotColor: string; textColor: string }> = {
   available: {
-    label: 'กำลังให้บริการอยู่',
+    label: 'Open',
     dotColor: 'bg-green-500',
     textColor: 'text-green-600',
   },
   occupied: {
-    label: 'เต็ม',
+    label: 'Occupied',
     dotColor: 'bg-gray-400',
     textColor: 'text-gray-500',
   },
   pending: {
-    label: 'รอการอนุมัติ',
+    label: 'Pending approval',
     dotColor: 'bg-yellow-500',
     textColor: 'text-yellow-600',
+  },
+  closed: {
+    label: 'Temporarily closed',
+    dotColor: 'bg-amber-500',
+    textColor: 'text-amber-600',
   },
 };
 
@@ -32,16 +37,13 @@ export default function OwnerParkingCard({ id, name, status, onManage }: OwnerPa
 
   return (
     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 p-5 bg-gray-50 rounded-xl shadow-sm hover:shadow-md transition-all duration-200">
-      {/* Left Side - Icon and Details */}
       <div className="flex items-center gap-4 flex-1">
-        {/* Icon Placeholder */}
         <div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center flex-shrink-0">
           <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
           </svg>
         </div>
 
-        {/* Name and Status */}
         <div className="flex flex-col gap-1">
           <h3 className="text-lg font-semibold text-gray-800">{name}</h3>
           <div className="flex items-center gap-2">
@@ -51,13 +53,12 @@ export default function OwnerParkingCard({ id, name, status, onManage }: OwnerPa
         </div>
       </div>
 
-      {/* Right Side - Manage Button */}
       <button
         onClick={() => onManage?.(id)}
         className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-100 hover:border-gray-300 transition-all duration-200"
       >
         <PencilIcon className="w-4 h-4" />
-        <span>จัดการ</span>
+        <span>Manage</span>
       </button>
     </div>
   );

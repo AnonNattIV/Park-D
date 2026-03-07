@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   CloudArrowUpIcon,
@@ -35,8 +36,30 @@ type ApiBookingHistory = {
   bookingTime: string;
   checkinTime: string | null;
   checkoutTime: string | null;
+  bookingStatus?: string;
   durationMinutes: number | null;
   totalPrice: number;
+  paymentStatus?: string | null;
+  paymentMethod?: string | null;
+  paymentAmount?: number | null;
+};
+
+type WalletTransaction = {
+  id: number;
+  type: string;
+  amount: number;
+  balanceBefore: number;
+  balanceAfter: number;
+  note: string | null;
+  bookingId: number | null;
+  paymentId: number | null;
+  createdAt: string;
+};
+
+type WalletSummary = {
+  id: number;
+  balance: number;
+  transactions: WalletTransaction[];
 };
 
 type UserApiResponse = {
@@ -55,16 +78,22 @@ type UserApiResponse = {
     profileImageUrl?: string | null;
   };
   bookings?: ApiBookingHistory[];
+  wallet?: WalletSummary;
   error?: string;
 };
 
-function formatDate(dateValue: string): string {
-  const parsed = new Date(dateValue);
+function formatScheduledDate(
+  checkinTime: string | null,
+  bookingTimeFallback: string
+): string {
+  const source = checkinTime || bookingTimeFallback;
+  const parsed = new Date(source);
   if (Number.isNaN(parsed.getTime())) {
     return '-';
   }
 
   return parsed.toLocaleDateString('th-TH', {
+    weekday: 'short',
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
@@ -110,11 +139,18 @@ function mapBookingToCard(booking: ApiBookingHistory): BookingHistory {
   return {
     id: booking.id,
     parkingName: booking.parkingName,
-    date: formatDate(booking.bookingTime),
+    date: formatScheduledDate(booking.checkinTime, booking.bookingTime),
     startTime: formatTime(booking.checkinTime),
     endTime: formatTime(booking.checkoutTime),
     duration: formatDuration(booking.durationMinutes),
-    totalPrice: booking.totalPrice,
+    totalPrice:
+      // Prefer stored payment amount when available; fallback to computed booking total.
+      booking.paymentAmount !== null && booking.paymentAmount !== undefined
+        ? booking.paymentAmount
+        : booking.totalPrice,
+    paymentStatus: booking.paymentStatus,
+    paymentMethod: booking.paymentMethod,
+    bookingStatus: booking.bookingStatus,
   };
 }
 
@@ -141,6 +177,7 @@ export default function ProfilePage() {
     avatar: null,
   });
   const [bookings, setBookings] = useState<BookingHistory[]>([]);
+  const [wallet, setWallet] = useState<WalletSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -152,6 +189,7 @@ export default function ProfilePage() {
   const authUsername = authUser?.username;
 
   useEffect(() => {
+    // Client-side guard for routes that require auth token + user payload.
     const storedToken = readStoredToken();
     const storedUser = readStoredAuthUser();
 
@@ -172,6 +210,7 @@ export default function ProfilePage() {
     let isMounted = true;
 
     const loadProfile = async () => {
+      // Single call hydrates profile, recent bookings, and wallet summary panel.
       setIsLoading(true);
       setLoadError('');
 
@@ -200,7 +239,7 @@ export default function ProfilePage() {
           return;
         }
 
-        setFormData({
+      setFormData({
           firstName: result.user.name || '',
           lastName: result.user.surname || '',
           gender: result.user.gender || '',
@@ -213,7 +252,9 @@ export default function ProfilePage() {
           avatar: result.user.profileImageUrl || null,
         });
         setBookings((result.bookings || []).map(mapBookingToCard));
+        setWallet(result.wallet || null);
 
+        // Refresh local auth cache so header/tabs use latest user profile values.
         const nextStoredUser: AuthUser = {
           id: authUserId,
           username: result.user.username || authUsername,
@@ -665,11 +706,48 @@ export default function ProfilePage() {
         </div>
 
         <section className="mt-8">
+          <h2 className="mb-4 text-xl font-bold text-gray-800">Wallet</h2>
+          <div className="mb-6 rounded-xl bg-white p-5 shadow-md">
+            <p className="text-sm text-gray-500">Current Balance</p>
+            <p className="mt-1 text-3xl font-bold text-[#5B7CFF]">
+              {(wallet?.balance || 0).toLocaleString('th-TH', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}{' '}
+              THB
+            </p>
+            {wallet?.transactions?.length ? (
+              <div className="mt-4 space-y-2">
+                {wallet.transactions.slice(0, 5).map((tx) => (
+                  <div
+                    key={tx.id}
+                    className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm"
+                  >
+                    <div>
+                      <p className="font-medium text-gray-700">{tx.type}</p>
+                      <p className="text-xs text-gray-500">{tx.note || '-'}</p>
+                    </div>
+                    <p className="font-semibold text-emerald-600">
+                      +{tx.amount.toLocaleString('th-TH', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}{' '}
+                      THB
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-gray-500">No wallet transactions yet.</p>
+            )}
+          </div>
           <h2 className="mb-6 text-xl font-bold text-gray-800">ประวัติการจอง</h2>
           <div className="space-y-4">
             {bookings.length > 0 ? (
               bookings.map((booking) => (
-                <BookingHistoryCard key={booking.id} booking={booking} />
+                <Link key={booking.id} href={`/booking-history/${booking.id}`} className="block">
+                  <BookingHistoryCard booking={booking} />
+                </Link>
               ))
             ) : (
               <div className="flex items-center justify-center py-12">

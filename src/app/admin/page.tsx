@@ -8,7 +8,36 @@ type OwnerRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 type OwnerRequestAction = 'APPROVE_OWNER' | 'REJECT_OWNER';
 type ParkingLotRequestStatus = 'REQUEST' | 'APPROVED' | 'DENIED';
 type ParkingLotRequestAction = 'APPROVE' | 'DENY';
-type AdminMenu = 'owner' | 'parking';
+type AdminMenu = 'owner' | 'parking' | 'payment';
+type PaymentReviewAction = 'APPROVE' | 'DENY';
+
+interface PaymentApprovalItem {
+  payment: {
+    id: number;
+    bookingId: number;
+    status: string;
+    method: string;
+    amount: number;
+    paidAt: string | null;
+    submittedAt: string;
+    proofUrl: string | null;
+  };
+  lot: {
+    id: number;
+    name: string;
+    location: string;
+  };
+  owner: {
+    id: number;
+    username: string;
+    name: string | null;
+  };
+  renter: {
+    id: number;
+    username: string;
+    name: string | null;
+  };
+}
 
 interface OwnerRequestItem {
   userId: number;
@@ -59,6 +88,21 @@ interface ParkingLotRequestPatchResponse {
   lot?: {
     lotId?: number;
     status?: string | null;
+  };
+}
+
+interface PaymentApprovalListResponse {
+  approvals?: PaymentApprovalItem[];
+  error?: string;
+}
+
+interface PaymentReviewResponse {
+  success?: boolean;
+  message?: string;
+  error?: string;
+  payment?: {
+    id: number;
+    status: string;
   };
 }
 
@@ -135,6 +179,12 @@ export default function AdminHomePage() {
   const [parkingActionError, setParkingActionError] = useState('');
   const [parkingActionMessage, setParkingActionMessage] = useState('');
   const [processingLotId, setProcessingLotId] = useState<number | null>(null);
+  const [paymentApprovals, setPaymentApprovals] = useState<PaymentApprovalItem[]>([]);
+  const [isPaymentLoading, setIsPaymentLoading] = useState(true);
+  const [paymentLoadError, setPaymentLoadError] = useState('');
+  const [paymentActionError, setPaymentActionError] = useState('');
+  const [paymentActionMessage, setPaymentActionMessage] = useState('');
+  const [processingPaymentId, setProcessingPaymentId] = useState<number | null>(null);
 
   useEffect(() => {
     const storedToken = readStoredToken();
@@ -243,6 +293,46 @@ export default function AdminHomePage() {
     }
   }, [router, token]);
 
+  const loadPaymentApprovals = useCallback(async () => {
+    if (!token) {
+      return;
+    }
+
+    setIsPaymentLoading(true);
+    setPaymentLoadError('');
+
+    try {
+      const response = await fetch('/api/admin/payment-approvals', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        cache: 'no-store',
+      });
+
+      if (response.status === 401) {
+        clearStoredAuth();
+        router.replace('/login');
+        return;
+      }
+
+      const result = (await response.json()) as PaymentApprovalListResponse;
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to load payment approvals');
+      }
+
+      setPaymentApprovals(result.approvals || []);
+    } catch (error) {
+      console.error('Unable to load payment approvals:', error);
+      setPaymentLoadError(
+        error instanceof Error ? error.message : 'Unable to load payment approvals right now.'
+      );
+    } finally {
+      setIsPaymentLoading(false);
+    }
+  }, [router, token]);
+
   useEffect(() => {
     if (!isReady || !token) {
       return;
@@ -250,7 +340,8 @@ export default function AdminHomePage() {
 
     void loadOwnerRequests();
     void loadParkingLotRequests();
-  }, [isReady, loadOwnerRequests, loadParkingLotRequests, token]);
+    void loadPaymentApprovals();
+  }, [isReady, loadOwnerRequests, loadParkingLotRequests, loadPaymentApprovals, token]);
 
   const handleLogout = () => {
     clearStoredAuth();
@@ -400,6 +491,66 @@ export default function AdminHomePage() {
     }
   };
 
+  const handlePaymentReviewAction = async (
+    item: PaymentApprovalItem,
+    action: PaymentReviewAction
+  ) => {
+    if (!token || item.payment.status.toUpperCase() !== 'PENDING') {
+      return;
+    }
+
+    setPaymentActionError('');
+    setPaymentActionMessage('');
+    setProcessingPaymentId(item.payment.id);
+
+    try {
+      const response = await fetch(`/api/payments/${item.payment.id}/review`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action }),
+      });
+
+      if (response.status === 401) {
+        clearStoredAuth();
+        router.replace('/login');
+        return;
+      }
+
+      const result = (await response.json()) as PaymentReviewResponse;
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to review payment');
+      }
+
+      const nextStatus = result.payment?.status?.toUpperCase();
+      setPaymentApprovals((prev) =>
+        prev.map((approval) =>
+          approval.payment.id === item.payment.id
+            ? {
+                ...approval,
+                payment: {
+                  ...approval.payment,
+                  status: nextStatus || (action === 'APPROVE' ? 'PAID' : 'FAILED'),
+                },
+              }
+            : approval
+        )
+      );
+
+      setPaymentActionMessage(result.message || 'Payment reviewed successfully.');
+    } catch (error) {
+      console.error('Unable to review payment:', error);
+      setPaymentActionError(
+        error instanceof Error ? error.message : 'Unable to review payment right now.'
+      );
+    } finally {
+      setProcessingPaymentId(null);
+    }
+  };
+
   const pendingOwnerCount = useMemo(
     () => ownerRequests.filter((item) => item.status === 'PENDING').length,
     [ownerRequests]
@@ -418,6 +569,13 @@ export default function AdminHomePage() {
   const deniedParkingCount = useMemo(
     () => parkingRequests.filter((item) => item.status === 'DENIED').length,
     [parkingRequests]
+  );
+
+  const pendingPaymentCount = useMemo(
+    () =>
+      paymentApprovals.filter((item) => item.payment.status.toUpperCase() === 'PENDING')
+        .length,
+    [paymentApprovals]
   );
 
   if (!isReady || !user) {
@@ -444,7 +602,7 @@ export default function AdminHomePage() {
           </div>
         </header>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <article className="rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">Pending Owner Requests</p>
             <p className="mt-2 text-3xl font-bold text-amber-700">{pendingOwnerCount}</p>
@@ -460,6 +618,10 @@ export default function AdminHomePage() {
           <article className="rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">Denied Parking Lots</p>
             <p className="mt-2 text-3xl font-bold text-rose-700">{deniedParkingCount}</p>
+          </article>
+          <article className="rounded-2xl bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Pending Payment Proofs</p>
+            <p className="mt-2 text-3xl font-bold text-amber-700">{pendingPaymentCount}</p>
           </article>
         </section>
 
@@ -487,6 +649,17 @@ export default function AdminHomePage() {
               }`}
             >
               Parking Lot Requests
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveMenu('payment')}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                activeMenu === 'payment'
+                  ? 'bg-white text-slate-900 shadow'
+                  : 'text-slate-600 hover:text-slate-800'
+              }`}
+            >
+              Payment Proofs
             </button>
           </div>
         </section>
@@ -595,7 +768,7 @@ export default function AdminHomePage() {
               </div>
             )}
           </section>
-        ) : (
+        ) : activeMenu === 'parking' ? (
           <section className="rounded-2xl bg-white p-5 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -682,6 +855,135 @@ export default function AdminHomePage() {
                                 void handleParkingLotRequestAction(item, 'DENY');
                               }}
                               disabled={!isRequest || isProcessing}
+                              className="flex-1 rounded-lg bg-rose-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              {isProcessing ? 'Processing...' : 'Deny'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        ) : (
+          <section className="rounded-2xl bg-white p-5 shadow-sm">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">Payment Proof Review Board</h2>
+                <p className="text-sm text-slate-500">Approve or deny uploaded payment proofs</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  void loadPaymentApprovals();
+                }}
+                disabled={isPaymentLoading}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isPaymentLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+
+            {paymentLoadError ? (
+              <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {paymentLoadError}
+              </div>
+            ) : null}
+
+            {paymentActionError ? (
+              <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {paymentActionError}
+              </div>
+            ) : null}
+
+            {paymentActionMessage ? (
+              <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                {paymentActionMessage}
+              </div>
+            ) : null}
+
+            {isPaymentLoading ? (
+              <p className="py-8 text-center text-sm text-slate-500">Loading payment approvals...</p>
+            ) : paymentApprovals.length === 0 ? (
+              <p className="py-8 text-center text-sm text-slate-500">No payment proofs found.</p>
+            ) : (
+              <div className="space-y-3">
+                {paymentApprovals.map((item) => {
+                  const isPending = item.payment.status.toUpperCase() === 'PENDING';
+                  const isProcessing = processingPaymentId === item.payment.id;
+
+                  return (
+                    <article key={item.payment.id} className="rounded-xl border border-slate-200 p-4">
+                      <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
+                        <div className="space-y-1">
+                          <p className="font-semibold text-slate-800">
+                            Payment #{item.payment.id} / Booking #{item.payment.bookingId}
+                          </p>
+                          <p className="text-sm text-slate-500">Lot: {item.lot.name}</p>
+                          <p className="text-sm text-slate-500">
+                            Owner: {item.owner.username} ({item.owner.name || '-'})
+                          </p>
+                          <p className="text-sm text-slate-500">
+                            Renter: {item.renter.username} ({item.renter.name || '-'})
+                          </p>
+                          <p className="text-sm text-slate-500">
+                            Amount: {item.payment.amount.toLocaleString('th-TH', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}{' '}
+                            THB ({item.payment.method})
+                          </p>
+                          <p className="text-sm text-slate-500">
+                            Submitted: {formatSubmittedAt(item.payment.submittedAt)}
+                          </p>
+                          {item.payment.proofUrl ? (
+                            <a
+                              href={item.payment.proofUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                            >
+                              Open Proof
+                            </a>
+                          ) : (
+                            <p className="text-xs text-rose-600">No proof image found.</p>
+                          )}
+                        </div>
+
+                        <div className="min-w-[300px] space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span
+                              className={`rounded-lg px-3 py-1 text-xs font-semibold ${
+                                item.payment.status.toUpperCase() === 'PAID'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : item.payment.status.toUpperCase() === 'FAILED'
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {item.payment.status}
+                            </span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handlePaymentReviewAction(item, 'APPROVE');
+                              }}
+                              disabled={!isPending || isProcessing}
+                              className="flex-1 rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              {isProcessing ? 'Processing...' : 'Approve'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handlePaymentReviewAction(item, 'DENY');
+                              }}
+                              disabled={!isPending || isProcessing}
                               className="flex-1 rounded-lg bg-rose-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-70"
                             >
                               {isProcessing ? 'Processing...' : 'Deny'}

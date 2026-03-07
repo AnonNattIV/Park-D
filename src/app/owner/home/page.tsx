@@ -30,6 +30,7 @@ type ParkingLotSystemRow = {
   ownerName: string;
   latitude: number | null;
   longitude: number | null;
+  ownerIncome: number;
 };
 
 type UserApiResponse = {
@@ -43,12 +44,60 @@ type UserApiResponse = {
   };
 };
 
+type OwnerBookingDetail = {
+  id: number;
+  lotId: number;
+  lotName: string;
+  renter: {
+    id: number;
+    username: string;
+    name: string | null;
+  };
+  bookingTime: string;
+  checkinTime: string | null;
+  checkinProofUrl: string | null;
+  checkoutTime: string | null;
+  bookingStatus: string;
+  payment: {
+    id: number;
+    status: string | null;
+    amount: number;
+    method: string | null;
+    proofUrl?: string | null;
+  } | null;
+};
+
 function mapParkingStatus(statusLabel: string): ParkingStatus {
-  if (statusLabel.toLowerCase().includes('pending')) {
+  const normalizedStatus = statusLabel.toLowerCase();
+
+  if (normalizedStatus.includes('pending')) {
     return 'pending';
   }
 
+  if (normalizedStatus.includes('inactive') || normalizedStatus.includes('closed')) {
+    return 'closed';
+  }
+
   return 'available';
+}
+
+function formatDateTimeValue(value: string | null): string {
+  if (!value) {
+    return '-';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '-';
+  }
+
+  return parsed.toLocaleString('th-TH', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 export default function OwnerPage() {
@@ -62,6 +111,16 @@ export default function OwnerPage() {
   const [requestError, setRequestError] = useState('');
   const [requestMessage, setRequestMessage] = useState('');
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+  const [ownerBookings, setOwnerBookings] = useState<OwnerBookingDetail[]>([]);
+  const [isBookingLoading, setIsBookingLoading] = useState(false);
+  const [bookingLoadError, setBookingLoadError] = useState('');
+  const [bookingActionMessage, setBookingActionMessage] = useState('');
+  const [bookingActionError, setBookingActionError] = useState('');
+  const [processingCancelBookingId, setProcessingCancelBookingId] = useState<number | null>(null);
+  const [processingCheckoutReviewId, setProcessingCheckoutReviewId] = useState<number | null>(null);
+  const [processingCheckoutReviewAction, setProcessingCheckoutReviewAction] = useState<
+    'APPROVE' | 'DENY' | null
+  >(null);
 
   const normalizedRole = authUser?.role?.toLowerCase() || '';
   const canManageOwnerView = normalizedRole === 'owner' || normalizedRole === 'admin';
@@ -81,11 +140,12 @@ export default function OwnerPage() {
   const totalSlots = parkingLots.reduce((sum, lot) => sum + lot.total, 0);
   const pendingLots = parkingLots.filter((lot) => lot.status.toLowerCase().includes('pending')).length;
   const requestingLots = parkingLots.filter((lot) => lot.status.toLowerCase().includes('pending'));
-  const averagePrice = parkingLots.length
-    ? Math.round(parkingLots.reduce((sum, lot) => sum + lot.price, 0) / parkingLots.length)
-    : 0;
+  const actualIncome = Number(
+    parkingLots.reduce((sum, lot) => sum + Number(lot.ownerIncome || 0), 0).toFixed(2)
+  );
 
   useEffect(() => {
+    // Bootstrap auth state from localStorage before loading owner-only data.
     const storedToken = readStoredToken();
     const storedUser = readStoredAuthUser();
 
@@ -107,6 +167,7 @@ export default function OwnerPage() {
     let isMounted = true;
 
     const syncOwnerRequestStatus = async () => {
+      // Keep local owner request badge in sync with the latest server state.
       try {
         const response = await fetch(`/api/USER/${authUser.id}`, {
           method: 'GET',
@@ -176,6 +237,7 @@ export default function OwnerPage() {
     let isMounted = true;
 
     const loadParkingLotSystem = async () => {
+      // Owner gets own lots, admin gets all lots (enforced by backend role checks).
       setIsLoading(true);
       setErrorMessage('');
 
@@ -228,6 +290,206 @@ export default function OwnerPage() {
       isMounted = false;
     };
   }, [canManageOwnerView, isReady, router, token]);
+
+  useEffect(() => {
+    if (!isReady || !token || !canManageOwnerView) {
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadOwnerBookings = async () => {
+      // This powers the owner table for cancel/checkout-review actions.
+      setIsBookingLoading(true);
+      setBookingLoadError('');
+
+      try {
+        const response = await fetch('/api/owner/bookings', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          cache: 'no-store',
+        });
+
+        if (response.status === 401) {
+          clearStoredAuth();
+          router.replace('/login');
+          return;
+        }
+
+        const result = (await response.json()) as {
+          bookings?: OwnerBookingDetail[];
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(result.error || 'Unable to load owner booking details');
+        }
+
+        if (!isMounted) {
+          return;
+        }
+
+        setOwnerBookings(result.bookings || []);
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        console.error('Unable to load owner bookings:', error);
+        setBookingLoadError('Unable to load owner booking details right now.');
+      } finally {
+        if (isMounted) {
+          setIsBookingLoading(false);
+        }
+      }
+    };
+
+    void loadOwnerBookings();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [canManageOwnerView, isReady, router, token]);
+
+  const handleCancelBookingByOwner = async (bookingId: number) => {
+    if (!token) {
+      return;
+    }
+
+    // Owner cancel triggers backend refund logic (wallet credit) when payment exists.
+    const confirmed = confirm('Cancel this booking and refund payment to renter wallet?');
+    if (!confirmed) {
+      return;
+    }
+
+    setBookingActionError('');
+    setBookingActionMessage('');
+    setProcessingCancelBookingId(bookingId);
+
+    try {
+      const response = await fetch(`/api/owner/bookings/${bookingId}/cancel`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.status === 401) {
+        clearStoredAuth();
+        router.replace('/login');
+        return;
+      }
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+        booking?: { id: number; status: string };
+      };
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to cancel booking');
+      }
+
+      setOwnerBookings((prev) =>
+        prev.map((item) =>
+          item.id === bookingId
+            ? {
+                ...item,
+                bookingStatus: result.booking?.status || 'CANCELLED',
+                payment: item.payment
+                  ? { ...item.payment, status: 'REFUNDED' }
+                  : item.payment,
+              }
+            : item
+        )
+      );
+      setBookingActionMessage(result.message || 'Booking cancelled successfully');
+    } catch (error) {
+      console.error('Unable to cancel owner booking:', error);
+      setBookingActionError(
+        error instanceof Error ? error.message : 'Unable to cancel booking right now.'
+      );
+    } finally {
+      setProcessingCancelBookingId(null);
+    }
+  };
+
+  const handleCheckoutReviewByOwner = async (
+    bookingId: number,
+    action: 'APPROVE' | 'DENY'
+  ) => {
+    if (!token) {
+      return;
+    }
+
+    // DENY keeps record but marks checkout rejected; APPROVE finalizes settlement.
+    if (action === 'DENY') {
+      const confirmed = confirm('Deny this checkout request?');
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setBookingActionError('');
+    setBookingActionMessage('');
+    setProcessingCheckoutReviewId(bookingId);
+    setProcessingCheckoutReviewAction(action);
+
+    try {
+      const response = await fetch(`/api/owner/bookings/${bookingId}/checkout-review`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action }),
+      });
+
+      if (response.status === 401) {
+        clearStoredAuth();
+        router.replace('/login');
+        return;
+      }
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+        booking?: { id: number; status: string };
+      };
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to review checkout');
+      }
+
+      const nextStatus =
+        result.booking?.status ||
+        (action === 'APPROVE' ? 'CHECKOUT_APPROVED' : 'CHECKOUT_REJECTED');
+
+      setOwnerBookings((previous) =>
+        previous.map((item) =>
+          item.id === bookingId
+            ? {
+                ...item,
+                bookingStatus: nextStatus,
+              }
+            : item
+        )
+      );
+      setBookingActionMessage(result.message || 'Checkout status updated');
+    } catch (error) {
+      console.error('Unable to review checkout request:', error);
+      setBookingActionError(
+        error instanceof Error ? error.message : 'Unable to review checkout right now.'
+      );
+    } finally {
+      setProcessingCheckoutReviewId(null);
+      setProcessingCheckoutReviewAction(null);
+    }
+  };
 
   const handleRequestOwnerAccess = async () => {
     if (!token || !authUser) {
@@ -417,7 +679,7 @@ export default function OwnerPage() {
           <OwnerStatCard title="Parking Lots" value={parkingLots.length} />
           <OwnerStatCard title="Total Slots" value={totalSlots} />
           <OwnerStatCard title="Pending Lots" value={pendingLots} />
-          <OwnerStatCard title="Average Price" value={averagePrice} unit="THB" />
+          <OwnerStatCard title="Actual Income" value={actualIncome} unit="THB" />
         </div>
 
         <section className="mb-8">
@@ -484,6 +746,163 @@ export default function OwnerPage() {
           ) : (
             <div className="rounded-2xl bg-white px-5 py-8 text-center text-gray-500 shadow-sm">
               No parking lot requests are pending right now.
+            </div>
+          )}
+        </section>
+
+        <section className="mb-8">
+          <div className="mb-4">
+            <h2 className="text-2xl font-bold text-gray-800">Booked Slot Details</h2>
+            <p className="text-sm text-gray-500">
+              Review renter bookings and cancel with automatic refund to wallet.
+            </p>
+          </div>
+
+          {bookingActionError ? (
+            <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+              {bookingActionError}
+            </div>
+          ) : null}
+
+          {bookingActionMessage ? (
+            <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">
+              {bookingActionMessage}
+            </div>
+          ) : null}
+
+          {bookingLoadError ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+              {bookingLoadError}
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-100 text-left text-sm font-semibold text-slate-700">
+                    <tr>
+                      <th className="px-4 py-3">Booking</th>
+                      <th className="px-4 py-3">Parking Lot</th>
+                      <th className="px-4 py-3">Renter</th>
+                      <th className="px-4 py-3">Check-in</th>
+                      <th className="px-4 py-3">Check-out</th>
+                      <th className="px-4 py-3">Payment</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white text-sm text-slate-600">
+                    {isBookingLoading ? (
+                      <tr>
+                        <td className="px-4 py-6 text-center text-slate-500" colSpan={8}>
+                          Loading booking details...
+                        </td>
+                      </tr>
+                    ) : ownerBookings.length === 0 ? (
+                      <tr>
+                        <td className="px-4 py-6 text-center text-slate-500" colSpan={8}>
+                          No booking details found.
+                        </td>
+                      </tr>
+                    ) : (
+                      ownerBookings.map((booking) => {
+                        const canCancel =
+                          booking.bookingStatus !== 'CANCELLED' &&
+                          booking.bookingStatus !== 'CHECKOUT_APPROVED' &&
+                          booking.bookingStatus !== 'CHECKING_OUT';
+                        const canReviewCheckout = booking.bookingStatus === 'CHECKING_OUT';
+                        const isProcessingCheckoutReview =
+                          processingCheckoutReviewId === booking.id;
+
+                        return (
+                          <tr key={booking.id} className="hover:bg-slate-50">
+                            <td className="px-4 py-4 font-semibold text-slate-800">#{booking.id}</td>
+                            <td className="px-4 py-4">{booking.lotName}</td>
+                            <td className="px-4 py-4">
+                              <div className="font-medium text-slate-700">
+                                {booking.renter.name || booking.renter.username}
+                              </div>
+                              <div className="text-xs text-slate-500">@{booking.renter.username}</div>
+                            </td>
+                            <td className="px-4 py-4">{formatDateTimeValue(booking.checkinTime)}</td>
+                            <td className="px-4 py-4">{formatDateTimeValue(booking.checkoutTime)}</td>
+                            <td className="px-4 py-4">
+                              {booking.payment
+                                ? `${booking.payment.amount.toLocaleString('th-TH', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })} THB (${booking.payment.status || '-'})`
+                                : '-'}
+                            </td>
+                            <td className="px-4 py-4">{booking.bookingStatus}</td>
+                            <td className="px-4 py-4">
+                              <div className="flex flex-col gap-2">
+                                {booking.checkinProofUrl ? (
+                                  <a
+                                    href={booking.checkinProofUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="rounded-lg border border-slate-300 px-3 py-2 text-center text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                                  >
+                                    View Check-in Proof
+                                  </a>
+                                ) : null}
+
+                                {canReviewCheckout ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        void handleCheckoutReviewByOwner(booking.id, 'APPROVE');
+                                      }}
+                                      disabled={isProcessingCheckoutReview}
+                                      className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                    >
+                                      {isProcessingCheckoutReview &&
+                                      processingCheckoutReviewAction === 'APPROVE'
+                                        ? 'Approving...'
+                                        : 'Approve Checkout'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        void handleCheckoutReviewByOwner(booking.id, 'DENY');
+                                      }}
+                                      disabled={isProcessingCheckoutReview}
+                                      className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                    >
+                                      {isProcessingCheckoutReview &&
+                                      processingCheckoutReviewAction === 'DENY'
+                                        ? 'Denying...'
+                                        : 'Deny Checkout'}
+                                    </button>
+                                  </>
+                                ) : null}
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void handleCancelBookingByOwner(booking.id);
+                                  }}
+                                  disabled={
+                                    !canCancel ||
+                                    processingCancelBookingId === booking.id ||
+                                    isProcessingCheckoutReview
+                                  }
+                                  className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                >
+                                  {processingCancelBookingId === booking.id
+                                    ? 'Cancelling...'
+                                    : 'Cancel'}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </section>

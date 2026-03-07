@@ -44,6 +44,29 @@ function buildLocationLabel({
   return segments.join(', ');
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const uniqueValues = new Set<string>();
+
+  value.forEach((item) => {
+    if (typeof item !== 'string') {
+      return;
+    }
+
+    const normalizedItem = item.trim();
+    if (!normalizedItem) {
+      return;
+    }
+
+    uniqueValues.add(normalizedItem);
+  });
+
+  return Array.from(uniqueValues);
+}
+
 function readBearerToken(request: NextRequest): string | null {
   const authorization = request.headers.get('authorization') || '';
 
@@ -126,6 +149,8 @@ export async function POST(request: NextRequest) {
         ? null
         : Number(body.longitude);
     const description = typeof body?.description === 'string' ? body.description.trim() : '';
+    const vehicleTypes = normalizeStringArray(body?.vehicleTypes);
+    const rules = normalizeStringArray(body?.rules);
     const totalSlotRaw = Number(body?.totalSlot);
     const priceRaw = Number(body?.price);
     const location = buildLocationLabel({
@@ -251,6 +276,42 @@ export async function POST(request: NextRequest) {
         priceRaw,
       ]
     );
+
+    try {
+      await pool.query(
+        `CREATE TABLE IF NOT EXISTS parking_lot_metadata (
+          lot_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+          vehicle_types_json TEXT NULL,
+          rules_json TEXT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          CONSTRAINT fk_parking_lot_metadata_lot
+            FOREIGN KEY (lot_id) REFERENCES parking_lots(lot_id)
+            ON DELETE CASCADE
+            ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+      );
+
+      await pool.query(
+        `INSERT INTO parking_lot_metadata (
+          lot_id,
+          vehicle_types_json,
+          rules_json
+        )
+        VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          vehicle_types_json = VALUES(vehicle_types_json),
+          rules_json = VALUES(rules_json),
+          updated_at = CURRENT_TIMESTAMP`,
+        [
+          insertResult.insertId,
+          vehicleTypes.length > 0 ? JSON.stringify(vehicleTypes) : null,
+          rules.length > 0 ? JSON.stringify(rules) : null,
+        ]
+      );
+    } catch (metadataError) {
+      console.error('Unable to save parking lot metadata:', metadataError);
+    }
 
     return NextResponse.json({
       success: true,

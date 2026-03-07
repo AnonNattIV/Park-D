@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useRef } from 'react';
 import { XMarkIcon, PlusIcon } from '@heroicons/react/24/outline';
 
 interface ParkingImageUploaderProps {
@@ -35,16 +35,13 @@ export default function ParkingImageUploader({
 
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-3">
-        รูปถ่าย
-      </label>
+      <label className="mb-3 block text-sm font-medium text-gray-700">รูปภาพ</label>
 
-      {/* Upload Box */}
       <div
         onClick={handleUploadClick}
-        className="w-[150px] h-[150px] rounded-lg border-2 border-dashed border-gray-300
-          flex flex-col items-center justify-center cursor-pointer
-          hover:border-[#5B7CFF] hover:bg-blue-50 transition-all duration-200"
+        className="h-[150px] w-[150px] cursor-pointer rounded-lg border-2 border-dashed border-gray-300
+          flex flex-col items-center justify-center
+          transition-all duration-200 hover:border-[#5B7CFF] hover:bg-blue-50"
       >
         <input
           ref={fileInputRef}
@@ -54,39 +51,37 @@ export default function ParkingImageUploader({
           onChange={handleImageUpload}
           className="hidden"
         />
-        <PlusIcon className="w-8 h-8 text-gray-400 mb-2" />
-        <span className="text-sm text-gray-500">add photos</span>
+        <PlusIcon className="mb-2 h-8 w-8 text-gray-400" />
+        <span className="text-sm text-gray-500">เพิ่มรูปภาพ</span>
       </div>
 
-      {/* Preview Thumbnails */}
-      {images.length > 0 && (
-        <div className="flex flex-wrap gap-3 mt-4">
+      {images.length > 0 ? (
+        <div className="mt-4 flex flex-wrap gap-3">
           {images.map((image, index) => (
-            <div key={index} className="relative group">
+            <div key={index} className="group relative">
               <img
                 src={URL.createObjectURL(image)}
                 alt={`Preview ${index + 1}`}
-                className="w-[100px] h-[100px] object-cover rounded-lg border border-gray-200"
+                className="h-[100px] w-[100px] rounded-lg border border-gray-200 object-cover"
               />
               <button
                 type="button"
                 onClick={() => handleRemoveImage(index)}
-                className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white
-                  rounded-full flex items-center justify-center
-                  opacity-0 group-hover:opacity-100 transition-opacity duration-200
-                  hover:bg-red-600"
+                className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center
+                  rounded-full bg-red-500 text-white opacity-0 transition-opacity duration-200
+                  hover:bg-red-600 group-hover:opacity-100"
               >
-                <XMarkIcon className="w-4 h-4" />
+                <XMarkIcon className="h-4 w-4" />
               </button>
             </div>
           ))}
         </div>
-      )}
+      ) : null}
 
-      {/* Max images hint */}
-      <p className="text-xs text-gray-400 mt-2">
+      <p className="mt-2 text-xs text-gray-400">
         {images.length} / {maxImages} รูป
       </p>
     </div>
   );
 }
+
