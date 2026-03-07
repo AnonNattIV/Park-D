@@ -38,6 +38,7 @@ interface BookingHistoryRow extends RowDataPacket {
   parking_name: string;
   booking_time: Date | string;
   checkin_datetime: Date | string | null;
+  checkin_proof: string | null;
   checkout_datetime: Date | string | null;
   total_time_minutes: number | null;
   total_price: number | string | null;
@@ -138,9 +139,10 @@ async function getBookingHistory(userId: number) {
   const [rows] = await getPool().query<BookingHistoryRow[]>(
     `SELECT
       b.b_id,
-      pl.location AS parking_name,
+      COALESCE(NULLIF(TRIM(pl.lot_name), ''), pl.location) AS parking_name,
       b.booking_time,
       b.checkin_datetime,
+      b.checkin_proof,
       b.checkout_datetime,
       b.total_time_minutes,
       CASE
@@ -160,6 +162,7 @@ async function getBookingHistory(userId: number) {
     parkingName: row.parking_name,
     bookingTime: row.booking_time,
     checkinTime: row.checkin_datetime,
+    checkinProof: row.checkin_proof,
     checkoutTime: row.checkout_datetime,
     durationMinutes: row.total_time_minutes,
     totalPrice: row.total_price === null ? 0 : Number(row.total_price),

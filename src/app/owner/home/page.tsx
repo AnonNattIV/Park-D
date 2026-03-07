@@ -66,7 +66,12 @@ export default function OwnerPage() {
   const normalizedRole = authUser?.role?.toLowerCase() || '';
   const canManageOwnerView = normalizedRole === 'owner' || normalizedRole === 'admin';
   const ownerRequestStatus = authUser?.ownerRequestStatus?.toUpperCase() || null;
-  const ownerRequestStatusLabel = ownerRequestStatus || 'NOT_REQUESTED';
+  const ownerRequestStatusLabel =
+    ownerRequestStatus === 'PENDING'
+      ? 'REQUEST'
+      : ownerRequestStatus === 'REJECTED'
+        ? 'DENIED'
+        : ownerRequestStatus || 'NOT_REQUESTED';
   const ownerRequestStatusBadgeClass =
     ownerRequestStatus === 'APPROVED'
       ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -75,6 +80,7 @@ export default function OwnerPage() {
         : 'border border-red-200 bg-red-50 text-red-700';
   const totalSlots = parkingLots.reduce((sum, lot) => sum + lot.total, 0);
   const pendingLots = parkingLots.filter((lot) => lot.status.toLowerCase().includes('pending')).length;
+  const requestingLots = parkingLots.filter((lot) => lot.status.toLowerCase().includes('pending'));
   const averagePrice = parkingLots.length
     ? Math.round(parkingLots.reduce((sum, lot) => sum + lot.price, 0) / parkingLots.length)
     : 0;
@@ -92,6 +98,69 @@ export default function OwnerPage() {
     setAuthUser(storedUser);
     setIsReady(true);
   }, [router]);
+
+  useEffect(() => {
+    if (!isReady || !token || !authUser?.id) {
+      return;
+    }
+
+    let isMounted = true;
+
+    const syncOwnerRequestStatus = async () => {
+      try {
+        const response = await fetch(`/api/USER/${authUser.id}`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          cache: 'no-store',
+        });
+
+        if (response.status === 401) {
+          clearStoredAuth();
+          router.replace('/login');
+          return;
+        }
+
+        if (!response.ok) {
+          return;
+        }
+
+        const result = (await response.json()) as UserApiResponse;
+        const nextOwnerRequestStatus = result.user?.ownerRequestStatus;
+
+        if (!isMounted || (nextOwnerRequestStatus !== null && typeof nextOwnerRequestStatus !== 'string')) {
+          return;
+        }
+
+        setAuthUser((previousUser) => {
+          if (!previousUser || previousUser.ownerRequestStatus === nextOwnerRequestStatus) {
+            return previousUser;
+          }
+
+          const nextUser: AuthUser = {
+            ...previousUser,
+            ownerRequestStatus: nextOwnerRequestStatus,
+          };
+
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('auth_user', JSON.stringify(nextUser));
+            notifyAuthStateChanged();
+          }
+
+          return nextUser;
+        });
+      } catch (error) {
+        console.error('Unable to sync owner request status:', error);
+      }
+    };
+
+    void syncOwnerRequestStatus();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authUser?.id, isReady, router, token]);
 
   useEffect(() => {
     if (!isReady || !token) {
@@ -277,7 +346,7 @@ export default function OwnerPage() {
 
               {ownerRequestStatus === 'REJECTED' ? (
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  Your previous owner request was rejected. You can submit a new request.
+                  Your previous owner request was denied. You can submit a new request.
                 </div>
               ) : null}
 
@@ -390,6 +459,35 @@ export default function OwnerPage() {
           )}
         </section>
 
+        <section className="mb-8">
+          <div className="mb-4">
+            <h2 className="text-2xl font-bold text-gray-800">Parking Lot Requests</h2>
+            <p className="text-sm text-gray-500">
+              These parking lots are still waiting for admin approval.
+            </p>
+          </div>
+
+          {requestingLots.length > 0 ? (
+            <div className="space-y-4">
+              {requestingLots.slice(0, 5).map((lot) => (
+                <OwnerParkingCard
+                  key={`request-${lot.id}`}
+                  id={String(lot.id)}
+                  name={lot.name}
+                  status="pending"
+                  onManage={(lotId) => {
+                    router.push(`/owner/parkingmanage?lotId=${lotId}`);
+                  }}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-white px-5 py-8 text-center text-gray-500 shadow-sm">
+              No parking lot requests are pending right now.
+            </div>
+          )}
+        </section>
+
         {errorMessage ? (
           <div className="mb-8 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
             {errorMessage}
@@ -445,7 +543,13 @@ export default function OwnerPage() {
                       <td className="px-4 py-4">{lot.total}</td>
                       <td className="px-4 py-4">{lot.priceLabel}</td>
                       <td className="px-4 py-4">
-                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            lot.status.toLowerCase().includes('pending')
+                              ? 'bg-amber-50 text-amber-700'
+                              : 'bg-emerald-50 text-emerald-700'
+                          }`}
+                        >
                           {lot.status}
                         </span>
                       </td>

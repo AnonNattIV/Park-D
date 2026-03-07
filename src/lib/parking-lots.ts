@@ -5,6 +5,7 @@ import getPool from '@/lib/db/mysql';
 
 interface ParkingLotRow extends RowDataPacket {
   lot_id: number;
+  lot_name: string | null;
   location: string;
   description: string | null;
   total_slot: number;
@@ -17,6 +18,7 @@ interface ParkingLotRow extends RowDataPacket {
 
 interface ParkingLotSystemDbRow extends RowDataPacket {
   lot_id: number;
+  lot_name: string | null;
   location: string;
   total_slot: number;
   price: number | string;
@@ -91,7 +93,16 @@ function buildPriceLabel(price: number): string {
   })} บาท/ชม.`;
 }
 
-function deriveLotName(location: string, fallbackId: number): string {
+function deriveLotName(
+  lotName: string | null | undefined,
+  location: string,
+  fallbackId: number
+): string {
+  const normalizedLotName = lotName?.trim();
+  if (normalizedLotName) {
+    return normalizedLotName;
+  }
+
   const primarySegment = location
     .split(',')
     .map((segment) => segment.trim())
@@ -161,6 +172,7 @@ export async function listHomeParkingLots(locationFilter?: string): Promise<Home
   const [rows] = await getPool().query<ParkingLotRow[]>(
     `SELECT
       pl.lot_id,
+      pl.lot_name,
       pl.location,
       pl.description,
       pl.total_slot,
@@ -181,6 +193,7 @@ export async function listHomeParkingLots(locationFilter?: string): Promise<Home
       AND pl.p_status = 'ACTIVE'${locationClause}
     GROUP BY
       pl.lot_id,
+      pl.lot_name,
       pl.location,
       pl.description,
       pl.total_slot,
@@ -201,7 +214,7 @@ export async function listHomeParkingLots(locationFilter?: string): Promise<Home
 
     return {
       id: row.lot_id,
-      name: deriveLotName(row.location, row.lot_id),
+      name: deriveLotName(row.lot_name, row.location, row.lot_id),
       address: row.location,
       description: row.description?.trim() || 'Parking lot available now.',
       available: Math.max(total - occupied, 0),
@@ -231,6 +244,7 @@ export async function listParkingLotSystemRows(
   const [rows] = await getPool().query<ParkingLotSystemDbRow[]>(
     `SELECT
       pl.lot_id,
+      pl.lot_name,
       pl.location,
       pl.total_slot,
       pl.price,
@@ -256,7 +270,7 @@ export async function listParkingLotSystemRows(
 
     return {
       id: row.lot_id,
-      name: deriveLotName(row.location, row.lot_id),
+      name: deriveLotName(row.lot_name, row.location, row.lot_id),
       addressLine: row.address_line?.trim() || row.location,
       streetNumber: normalizeText(row.street_number),
       district: normalizeText(row.district),
@@ -279,7 +293,7 @@ export async function listParkingLotSystemRows(
 export async function getParkingLotDetail(lotId: number): Promise<ParkingLotDetail | null> {
   const pool = getPool();
   const [lotRows] = await pool.query<RowDataPacket[]>(
-    'SELECT lot_id, description, location, price, total_slot, /* … */ ' +
+    'SELECT lot_id, lot_name, description, location, price, total_slot, /* … */ ' +
     'FROM parking_lots WHERE lot_id = ?',
     [lotId]
   );
@@ -301,3 +315,4 @@ export async function getParkingLotDetail(lotId: number): Promise<ParkingLotDeta
     // TODO: vehicleTypes, rules, images
   };
 }
+

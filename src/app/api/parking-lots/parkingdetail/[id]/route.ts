@@ -18,7 +18,7 @@ export async function GET(
     const pool = getPool();
 
     const [lotRows] = await pool.query<RowDataPacket[]>(
-      'SELECT lot_id, description, location, price, total_slot FROM parking_lots WHERE lot_id = ?',
+      'SELECT lot_id, lot_name, description, location, price, total_slot FROM parking_lots WHERE lot_id = ?',
       [id]
     );
     if (lotRows.length === 0) {
