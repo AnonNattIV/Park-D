@@ -3,6 +3,14 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { listParkingLotSystemRows } from '@/lib/parking-lots';
+import { ensureParkingLotMetadataSchema } from '@/lib/parking-lot-metadata';
+import { translateTextsToEnglish, translateTextsToThai } from '@/lib/translation-api';
+import {
+  deleteParkingLotEvidenceByUrl,
+  deleteParkingLotImageByUrl,
+  uploadParkingLotEvidence,
+  uploadParkingLotImage,
+} from '@/lib/storage';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +22,29 @@ type TokenPayload = {
 interface OwnerProfileRow extends RowDataPacket {
   user_id: number;
 }
+
+const MAX_IMAGE_FILES = 5;
+const MAX_IMAGE_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+const MAX_EVIDENCE_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+
+type CreateParkingLotPayload = {
+  lotName: string;
+  addressLine: string;
+  streetNumber: string;
+  district: string;
+  amphoe: string;
+  subdistrict: string;
+  province: string;
+  latitude: number | null;
+  longitude: number | null;
+  description: string;
+  vehicleTypes: string[];
+  rules: string[];
+  totalSlot: number;
+  price: number;
+  imageFiles: File[];
+  ownershipEvidenceFile: File | null;
+};
 
 function buildLocationLabel({
   addressLine,
@@ -45,26 +76,88 @@ function buildLocationLabel({
 }
 
 function normalizeStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
   const uniqueValues = new Set<string>();
 
-  value.forEach((item) => {
-    if (typeof item !== 'string') {
-      return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => {
+      if (typeof item !== 'string') {
+        return;
+      }
+
+      const normalizedItem = item.trim();
+      if (!normalizedItem) {
+        return;
+      }
+
+      uniqueValues.add(normalizedItem);
+    });
+
+    return Array.from(uniqueValues);
+  }
+
+  if (typeof value === 'string') {
+    const normalizedValue = value.trim();
+    if (!normalizedValue) {
+      return [];
     }
 
-    const normalizedItem = item.trim();
-    if (!normalizedItem) {
-      return;
+    try {
+      const parsed = JSON.parse(normalizedValue) as unknown;
+      if (Array.isArray(parsed)) {
+        parsed.forEach((item) => {
+          if (typeof item !== 'string') {
+            return;
+          }
+
+          const normalizedItem = item.trim();
+          if (!normalizedItem) {
+            return;
+          }
+
+          uniqueValues.add(normalizedItem);
+        });
+
+        return Array.from(uniqueValues);
+      }
+    } catch {
+      // fall back to comma/newline parser
     }
 
-    uniqueValues.add(normalizedItem);
-  });
+    normalizedValue
+      .split('\n')
+      .flatMap((line) => line.split(','))
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .forEach((item) => uniqueValues.add(item));
+  }
 
   return Array.from(uniqueValues);
+}
+
+function readFormString(value: FormDataEntryValue | null): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function readFormNumber(value: FormDataEntryValue | null): number {
+  if (typeof value !== 'string') {
+    return Number.NaN;
+  }
+
+  return Number(value);
+}
+
+function normalizeImageFiles(values: FormDataEntryValue[]): File[] {
+  return values
+    .filter((value): value is File => value instanceof File)
+    .filter((file) => file.size > 0);
+}
+
+function normalizeEvidenceFile(value: FormDataEntryValue | null): File | null {
+  if (!(value instanceof File)) {
+    return null;
+  }
+
+  return value.size > 0 ? value : null;
 }
 
 function readBearerToken(request: NextRequest): string | null {
@@ -96,6 +189,74 @@ function readRequester(request: NextRequest): { userId: number; role: string } |
   return {
     userId,
     role,
+  };
+}
+
+async function readCreateParkingLotPayload(
+  request: NextRequest
+): Promise<CreateParkingLotPayload> {
+  const contentType = (request.headers.get('content-type') || '').toLowerCase();
+
+  if (contentType.includes('multipart/form-data')) {
+    const formData = await request.formData();
+    return {
+      lotName: readFormString(formData.get('lotName')),
+      addressLine: readFormString(formData.get('addressLine')),
+      streetNumber: readFormString(formData.get('streetNumber')),
+      district: readFormString(formData.get('district')),
+      amphoe: readFormString(formData.get('amphoe')),
+      subdistrict: readFormString(formData.get('subdistrict')),
+      province: readFormString(formData.get('province')),
+      latitude: (() => {
+        const value = formData.get('latitude');
+        if (value === null || value === '') {
+          return null;
+        }
+        const parsed = readFormNumber(value);
+        return Number.isFinite(parsed) ? parsed : Number.NaN;
+      })(),
+      longitude: (() => {
+        const value = formData.get('longitude');
+        if (value === null || value === '') {
+          return null;
+        }
+        const parsed = readFormNumber(value);
+        return Number.isFinite(parsed) ? parsed : Number.NaN;
+      })(),
+      description: readFormString(formData.get('description')),
+      vehicleTypes: normalizeStringArray(formData.get('vehicleTypes')),
+      rules: normalizeStringArray(formData.get('rules')),
+      totalSlot: readFormNumber(formData.get('totalSlot')),
+      price: readFormNumber(formData.get('price')),
+      imageFiles: normalizeImageFiles(formData.getAll('images')),
+      ownershipEvidenceFile: normalizeEvidenceFile(formData.get('ownershipEvidence')),
+    };
+  }
+
+  const body = await request.json();
+  return {
+    lotName: typeof body?.lotName === 'string' ? body.lotName.trim() : '',
+    addressLine: typeof body?.addressLine === 'string' ? body.addressLine.trim() : '',
+    streetNumber: typeof body?.streetNumber === 'string' ? body.streetNumber.trim() : '',
+    district: typeof body?.district === 'string' ? body.district.trim() : '',
+    amphoe: typeof body?.amphoe === 'string' ? body.amphoe.trim() : '',
+    subdistrict: typeof body?.subdistrict === 'string' ? body.subdistrict.trim() : '',
+    province: typeof body?.province === 'string' ? body.province.trim() : '',
+    latitude:
+      body?.latitude === null || body?.latitude === undefined || body?.latitude === ''
+        ? null
+        : Number(body.latitude),
+    longitude:
+      body?.longitude === null || body?.longitude === undefined || body?.longitude === ''
+        ? null
+        : Number(body.longitude),
+    description: typeof body?.description === 'string' ? body.description.trim() : '',
+    vehicleTypes: normalizeStringArray(body?.vehicleTypes),
+    rules: normalizeStringArray(body?.rules),
+    totalSlot: Number(body?.totalSlot),
+    price: Number(body?.price),
+    imageFiles: [],
+    ownershipEvidenceFile: null,
   };
 }
 
@@ -132,35 +293,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const body = await request.json();
-    const lotName = typeof body?.lotName === 'string' ? body.lotName.trim() : '';
-    const addressLine = typeof body?.addressLine === 'string' ? body.addressLine.trim() : '';
-    const streetNumber = typeof body?.streetNumber === 'string' ? body.streetNumber.trim() : '';
-    const district = typeof body?.district === 'string' ? body.district.trim() : '';
-    const amphoe = typeof body?.amphoe === 'string' ? body.amphoe.trim() : '';
-    const subdistrict = typeof body?.subdistrict === 'string' ? body.subdistrict.trim() : '';
-    const province = typeof body?.province === 'string' ? body.province.trim() : '';
-    const rawLatitude =
-      body?.latitude === null || body?.latitude === undefined || body?.latitude === ''
-        ? null
-        : Number(body.latitude);
-    const rawLongitude =
-      body?.longitude === null || body?.longitude === undefined || body?.longitude === ''
-        ? null
-        : Number(body.longitude);
-    const description = typeof body?.description === 'string' ? body.description.trim() : '';
-    const vehicleTypes = normalizeStringArray(body?.vehicleTypes);
-    const rules = normalizeStringArray(body?.rules);
-    const totalSlotRaw = Number(body?.totalSlot);
-    const priceRaw = Number(body?.price);
-    const location = buildLocationLabel({
-      addressLine,
-      streetNumber,
-      district,
-      amphoe,
-      subdistrict,
-      province,
-    });
+    const payload = await readCreateParkingLotPayload(request);
+    const lotName = payload.lotName;
+    const addressLine = payload.addressLine;
+    const streetNumber = payload.streetNumber;
+    const district = payload.district;
+    const amphoe = payload.amphoe;
+    const subdistrict = payload.subdistrict;
+    const province = payload.province;
+    const rawLatitude = payload.latitude;
+    const rawLongitude = payload.longitude;
+    const description = payload.description;
+    const vehicleTypes = payload.vehicleTypes;
+    const rules = payload.rules;
+    const totalSlotRaw = payload.totalSlot;
+    const priceRaw = payload.price;
+    const imageFiles = payload.imageFiles;
+    const ownershipEvidenceFile = payload.ownershipEvidenceFile;
+    const lotNameEn = lotName;
+    let addressLineEn = '';
+    let streetNumberEn = '';
+    let districtEn = '';
+    let amphoeEn = '';
+    let subdistrictEn = '';
+    let provinceEn = '';
+    const lotNameTh = lotName;
+    let addressLineTh = '';
+    let streetNumberTh = '';
+    let districtTh = '';
+    let amphoeTh = '';
+    let subdistrictTh = '';
+    let provinceTh = '';
+    let location = '';
+    let locationTh = '';
 
     if (!lotName) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
@@ -190,16 +355,67 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Province is required' }, { status: 400 });
     }
 
-    if (!location) {
-      return NextResponse.json({ error: 'Unable to build location from address fields' }, { status: 400 });
-    }
-
     if (!Number.isInteger(totalSlotRaw) || totalSlotRaw <= 0) {
       return NextResponse.json({ error: 'Total slot must be a positive integer' }, { status: 400 });
     }
 
     if (!Number.isFinite(priceRaw) || priceRaw <= 0) {
       return NextResponse.json({ error: 'Price must be greater than 0' }, { status: 400 });
+    }
+
+    if (imageFiles.length === 0) {
+      return NextResponse.json(
+        { error: 'At least one parking lot image is required' },
+        { status: 400 }
+      );
+    }
+
+    if (!ownershipEvidenceFile) {
+      return NextResponse.json(
+        { error: 'Ownership evidence file (pdf/image) is required' },
+        { status: 400 }
+      );
+    }
+
+    if (imageFiles.length > MAX_IMAGE_FILES) {
+      return NextResponse.json(
+        { error: `You can upload up to ${MAX_IMAGE_FILES} images` },
+        { status: 400 }
+      );
+    }
+
+    for (const imageFile of imageFiles) {
+      if (!imageFile.type.startsWith('image/')) {
+        return NextResponse.json(
+          { error: 'Only image files are allowed for parking lot images' },
+          { status: 400 }
+        );
+      }
+
+      if (imageFile.size > MAX_IMAGE_FILE_SIZE_BYTES) {
+        return NextResponse.json(
+          { error: 'Each parking lot image must be 5 MB or smaller' },
+          { status: 400 }
+        );
+      }
+    }
+
+    const evidenceContentType = ownershipEvidenceFile.type || '';
+    const isEvidenceImage = evidenceContentType.startsWith('image/');
+    const isEvidencePdf = evidenceContentType === 'application/pdf';
+
+    if (!isEvidenceImage && !isEvidencePdf) {
+      return NextResponse.json(
+        { error: 'Ownership evidence must be a PDF or image file' },
+        { status: 400 }
+      );
+    }
+
+    if (ownershipEvidenceFile.size > MAX_EVIDENCE_FILE_SIZE_BYTES) {
+      return NextResponse.json(
+        { error: 'Ownership evidence file must be 10 MB or smaller' },
+        { status: 400 }
+      );
     }
 
     if ((rawLatitude === null) !== (rawLongitude === null)) {
@@ -219,6 +435,62 @@ export async function POST(request: NextRequest) {
       if (!Number.isFinite(rawLongitude) || rawLongitude < -180 || rawLongitude > 180) {
         return NextResponse.json({ error: 'Longitude must be between -180 and 180' }, { status: 400 });
       }
+    }
+
+    [
+      addressLineEn,
+      streetNumberEn,
+      districtEn,
+      amphoeEn,
+      subdistrictEn,
+      provinceEn,
+    ] = await translateTextsToEnglish([
+      addressLine,
+      streetNumber,
+      district,
+      amphoe,
+      subdistrict,
+      province,
+    ]);
+
+    [
+      addressLineTh,
+      streetNumberTh,
+      districtTh,
+      amphoeTh,
+      subdistrictTh,
+      provinceTh,
+    ] = await translateTextsToThai([
+      addressLine,
+      streetNumber,
+      district,
+      amphoe,
+      subdistrict,
+      province,
+    ]);
+
+    location = buildLocationLabel({
+      addressLine: addressLineEn,
+      streetNumber: streetNumberEn,
+      district: districtEn,
+      amphoe: amphoeEn,
+      subdistrict: subdistrictEn,
+      province: provinceEn,
+    });
+    locationTh = buildLocationLabel({
+      addressLine: addressLineTh,
+      streetNumber: streetNumberTh,
+      district: districtTh,
+      amphoe: amphoeTh,
+      subdistrict: subdistrictTh,
+      province: provinceTh,
+    });
+
+    if (!location) {
+      return NextResponse.json(
+        { error: 'Unable to build location from address fields' },
+        { status: 400 }
+      );
     }
 
     const pool = getPool();
@@ -261,15 +533,15 @@ export async function POST(request: NextRequest) {
       VALUES (?, ?, ?, 0, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         requester.userId,
-        lotName || null,
+        lotNameEn || null,
         description || null,
         location,
-        addressLine || null,
-        streetNumber || null,
-        district || null,
-        amphoe || null,
-        subdistrict || null,
-        province || null,
+        addressLineEn || null,
+        streetNumberEn || null,
+        districtEn || null,
+        amphoeEn || null,
+        subdistrictEn || null,
+        provinceEn || null,
         rawLatitude,
         rawLongitude,
         totalSlotRaw,
@@ -277,40 +549,110 @@ export async function POST(request: NextRequest) {
       ]
     );
 
+    const uploadedImageUrls: string[] = [];
+    let uploadedEvidenceUrl: string | null = null;
+
     try {
-      await pool.query(
-        `CREATE TABLE IF NOT EXISTS parking_lot_metadata (
-          lot_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-          vehicle_types_json TEXT NULL,
-          rules_json TEXT NULL,
-          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          CONSTRAINT fk_parking_lot_metadata_lot
-            FOREIGN KEY (lot_id) REFERENCES parking_lots(lot_id)
-            ON DELETE CASCADE
-            ON UPDATE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+      uploadedEvidenceUrl = await uploadParkingLotEvidence(
+        ownershipEvidenceFile,
+        requester.userId,
+        insertResult.insertId
       );
 
+      for (let index = 0; index < imageFiles.length; index += 1) {
+        const imageUrl = await uploadParkingLotImage(
+          imageFiles[index],
+          requester.userId,
+          insertResult.insertId,
+          index + 1
+        );
+        uploadedImageUrls.push(imageUrl);
+      }
+    } catch (uploadError) {
+      console.error('Unable to upload parking lot files:', uploadError);
+      await Promise.allSettled(
+        uploadedImageUrls.map((imageUrl) => deleteParkingLotImageByUrl(imageUrl))
+      );
+      await deleteParkingLotEvidenceByUrl(uploadedEvidenceUrl);
+      await pool.query(
+        `DELETE FROM parking_lots
+        WHERE lot_id = ?
+        LIMIT 1`,
+        [insertResult.insertId]
+      );
+
+      return NextResponse.json(
+        { error: 'Unable to upload parking lot files right now' },
+        { status: 500 }
+      );
+    }
+
+    try {
+      await ensureParkingLotMetadataSchema();
       await pool.query(
         `INSERT INTO parking_lot_metadata (
           lot_id,
           vehicle_types_json,
-          rules_json
+          rules_json,
+          image_urls_json,
+          owner_evidence_url,
+          display_lot_name_th,
+          display_location_th,
+          display_address_line_th,
+          display_street_number_th,
+          display_district_th,
+          display_amphoe_th,
+          display_subdistrict_th,
+          display_province_th
         )
-        VALUES (?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           vehicle_types_json = VALUES(vehicle_types_json),
           rules_json = VALUES(rules_json),
+          image_urls_json = VALUES(image_urls_json),
+          owner_evidence_url = VALUES(owner_evidence_url),
+          display_lot_name_th = VALUES(display_lot_name_th),
+          display_location_th = VALUES(display_location_th),
+          display_address_line_th = VALUES(display_address_line_th),
+          display_street_number_th = VALUES(display_street_number_th),
+          display_district_th = VALUES(display_district_th),
+          display_amphoe_th = VALUES(display_amphoe_th),
+          display_subdistrict_th = VALUES(display_subdistrict_th),
+          display_province_th = VALUES(display_province_th),
           updated_at = CURRENT_TIMESTAMP`,
         [
           insertResult.insertId,
           vehicleTypes.length > 0 ? JSON.stringify(vehicleTypes) : null,
           rules.length > 0 ? JSON.stringify(rules) : null,
+          uploadedImageUrls.length > 0 ? JSON.stringify(uploadedImageUrls) : null,
+          uploadedEvidenceUrl,
+          lotNameTh || null,
+          locationTh || null,
+          addressLineTh || null,
+          streetNumberTh || null,
+          districtTh || null,
+          amphoeTh || null,
+          subdistrictTh || null,
+          provinceTh || null,
         ]
       );
     } catch (metadataError) {
       console.error('Unable to save parking lot metadata:', metadataError);
+      await Promise.allSettled(
+        uploadedImageUrls.map((imageUrl) => deleteParkingLotImageByUrl(imageUrl))
+      );
+      await deleteParkingLotEvidenceByUrl(uploadedEvidenceUrl);
+      await pool.query(
+        `DELETE FROM parking_lots
+        WHERE lot_id = ?
+        LIMIT 1`,
+        [insertResult.insertId]
+      );
+
+      return NextResponse.json(
+        { error: 'Unable to save parking lot metadata right now' },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({

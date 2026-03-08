@@ -29,6 +29,7 @@ type BookingDetailResponse = {
       isCheckinWindow: boolean;
       isCheckoutWindow: boolean;
       hasCheckinProof: boolean;
+      canCancelBeforeReservation: boolean;
     };
     payment: {
       id: number;
@@ -40,6 +41,14 @@ type BookingDetailResponse = {
     } | null;
   };
 };
+
+type PaymentCreateResponse = {
+  success?: boolean;
+  message?: string;
+  error?: string;
+};
+
+const BANGKOK_TIMEZONE = 'Asia/Bangkok';
 
 function toDate(value: string | null): Date | null {
   if (!value) {
@@ -61,6 +70,7 @@ function formatDateTime(value: string | null): string {
   }
 
   return parsed.toLocaleString('th-TH', {
+    timeZone: BANGKOK_TIMEZONE,
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
@@ -74,6 +84,24 @@ function formatMoney(value: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function getBookingStatusLabel(
+  bookingStatus: string,
+  paymentStatus: string | null | undefined
+): string {
+  const normalizedBookingStatus = bookingStatus.toUpperCase();
+  const normalizedPaymentStatus = (paymentStatus || '').toUpperCase();
+
+  if (normalizedBookingStatus === 'WAITING_FOR_PAYMENT' && normalizedPaymentStatus === 'PENDING') {
+    return 'UNDER PROGRESS OF CHECKING';
+  }
+
+  if (normalizedBookingStatus === 'PAYMENT_CONFIRMED' && normalizedPaymentStatus === 'PAID') {
+    return 'CHECKOUT';
+  }
+
+  return normalizedBookingStatus;
 }
 
 export default function BookingHistoryDetailPage() {
@@ -91,6 +119,7 @@ export default function BookingHistoryDetailPage() {
   const [actionMessage, setActionMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkinProofFile, setCheckinProofFile] = useState<File | null>(null);
+  const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
 
   useEffect(() => {
     const storedToken = readStoredToken();
@@ -173,7 +202,32 @@ export default function BookingHistoryDetailPage() {
 
     const status = booking.status.toUpperCase();
     const isApproved = status === 'PAYMENT_CONFIRMED' || status === 'CHECKIN_REJECTED';
-    return isApproved && booking.timeFlags.isCheckinWindow;
+    return isApproved && booking.timeFlags.isCheckinWindow && !booking.timeFlags.hasCheckinProof;
+  }, [booking]);
+
+  const canSubmitPayment = useMemo(() => {
+    if (!booking) {
+      return false;
+    }
+
+    const bookingStatus = booking.status.toUpperCase();
+    const paymentStatus = booking.payment?.status?.toUpperCase() || '';
+    if (bookingStatus !== 'WAITING_FOR_PAYMENT') {
+      return false;
+    }
+
+    return paymentStatus !== 'PAID' && paymentStatus !== 'PENDING';
+  }, [booking]);
+
+  const isPaymentUnderReview = useMemo(() => {
+    if (!booking) {
+      return false;
+    }
+
+    return (
+      booking.status.toUpperCase() === 'WAITING_FOR_PAYMENT' &&
+      (booking.payment?.status?.toUpperCase() || '') === 'PENDING'
+    );
   }, [booking]);
 
   const canCheckout = useMemo(() => {
@@ -191,7 +245,37 @@ export default function BookingHistoryDetailPage() {
       status === 'CHECKIN_APPROVED' ||
       status === 'CHECKOUT_REJECTED';
 
-    return canByStatus && booking.timeFlags.isCheckoutWindow;
+    return canByStatus;
+  }, [booking]);
+
+  const canCancelCheckout = useMemo(() => {
+    if (!booking) {
+      return false;
+    }
+
+    return booking.status.toUpperCase() === 'CHECKING_OUT';
+  }, [booking]);
+
+  const canCancelBooking = useMemo(() => {
+    if (!booking) {
+      return false;
+    }
+
+    const status = booking.status.toUpperCase();
+    if (status === 'CANCELLED' || status === 'CHECKOUT_APPROVED') {
+      return false;
+    }
+
+    return booking.timeFlags.canCancelBeforeReservation;
+  }, [booking]);
+
+  const isFinalizedBooking = useMemo(() => {
+    if (!booking) {
+      return false;
+    }
+
+    const status = booking.status.toUpperCase();
+    return status === 'CANCELLED' || status === 'CHECKOUT_APPROVED';
   }, [booking]);
 
   const handleCheckinProofChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -297,6 +381,149 @@ export default function BookingHistoryDetailPage() {
     }
   };
 
+  const handlePaymentProofChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null;
+    setPaymentProofFile(file);
+    setActionError('');
+    setActionMessage('');
+  };
+
+  const handleSubmitPayment = async () => {
+    if (!token || !bookingId || !paymentProofFile) {
+      setActionError('Please upload payment proof image.');
+      return;
+    }
+
+    setActionError('');
+    setActionMessage('');
+    setIsSubmitting(true);
+
+    try {
+      const body = new FormData();
+      body.append('bookingId', String(bookingId));
+      body.append('payMethod', 'QR_TRANSFER');
+      body.append('proof', paymentProofFile);
+
+      const response = await fetch('/api/payments', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body,
+      });
+
+      if (response.status === 401) {
+        clearStoredAuth();
+        router.replace('/login');
+        return;
+      }
+
+      const result = (await response.json()) as PaymentCreateResponse;
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to submit payment proof');
+      }
+
+      setActionMessage(result.message || 'Payment proof submitted successfully.');
+      setPaymentProofFile(null);
+      await loadBookingDetail();
+    } catch (error) {
+      console.error('Unable to submit payment proof:', error);
+      setActionError(
+        error instanceof Error ? error.message : 'Unable to submit payment proof right now.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCancelCheckout = async () => {
+    if (!token || !bookingId) {
+      return;
+    }
+
+    setActionError('');
+    setActionMessage('');
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(`/api/bookings/${bookingId}/checkout`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.status === 401) {
+        clearStoredAuth();
+        router.replace('/login');
+        return;
+      }
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+        message?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to cancel checkout');
+      }
+
+      setActionMessage(result.message || 'Checkout request cancelled.');
+      await loadBookingDetail();
+    } catch (error) {
+      console.error('Unable to cancel checkout:', error);
+      setActionError(
+        error instanceof Error ? error.message : 'Unable to cancel checkout right now.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCancelBooking = async () => {
+    if (!token || !bookingId) {
+      return;
+    }
+
+    setActionError('');
+    setActionMessage('');
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(`/api/bookings/${bookingId}/cancel`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.status === 401) {
+        clearStoredAuth();
+        router.replace('/login');
+        return;
+      }
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+        message?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to cancel booking');
+      }
+
+      setActionMessage(result.message || 'Booking cancelled.');
+      await loadBookingDetail();
+    } catch (error) {
+      console.error('Unable to cancel booking:', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to cancel booking right now.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   if (!isReady || isLoading) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -334,7 +561,9 @@ export default function BookingHistoryDetailPage() {
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             <div className="rounded-xl bg-slate-50 p-4">
               <p className="text-xs font-semibold uppercase text-slate-500">Status</p>
-              <p className="mt-1 text-lg font-bold text-slate-800">{booking.status}</p>
+              <p className="mt-1 text-lg font-bold text-slate-800">
+                {getBookingStatusLabel(booking.status, booking.payment?.status)}
+              </p>
             </div>
             <div className="rounded-xl bg-slate-50 p-4">
               <p className="text-xs font-semibold uppercase text-slate-500">Plate</p>
@@ -402,49 +631,126 @@ export default function BookingHistoryDetailPage() {
             </div>
           ) : null}
 
-          <div className="mt-6 space-y-4">
-            <div className="rounded-xl border border-slate-200 p-4">
-              <p className="text-sm font-semibold text-slate-800">Check-in</p>
-              <p className="mt-1 text-xs text-slate-500">
-                Available only in booking time after payment approval.
+          {booking.status.toUpperCase() === 'WAITING_FOR_PAYMENT' ? (
+            <div className="mt-6 rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <p className="text-sm font-semibold text-blue-800">Payment</p>
+              <p className="mt-1 text-xs text-blue-700">
+                Submit payment proof within 10 minutes after reservation. If not submitted, booking is auto-cancelled.
               </p>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleCheckinProofChange}
-                className="mt-3 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
+              {isPaymentUnderReview ? (
+                <p className="mt-3 rounded-lg bg-white px-3 py-2 text-sm text-blue-700">
+                  Payment proof is under progress of checking by admin.
+                </p>
+              ) : (
+                <div className="mt-3">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePaymentProofChange}
+                    className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleSubmitPayment();
+                    }}
+                    disabled={isSubmitting || !canSubmitPayment || !paymentProofFile}
+                    className="mt-3 rounded-lg bg-[#5B7CFF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#4a6bef] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isSubmitting ? 'Submitting...' : 'Submit Payment Proof'}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {canCancelBooking ? (
+            <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 p-4">
+              <p className="text-sm text-rose-700">
+                You can cancel only at least 1 day before reservation time.
+              </p>
               <button
                 type="button"
                 onClick={() => {
-                  void handleSubmitCheckin();
+                  void handleCancelBooking();
                 }}
-                disabled={!canCheckin || !checkinProofFile || isSubmitting}
-                className="mt-3 rounded-lg bg-[#5B7CFF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#4a6bef] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSubmitting}
+                className="mt-3 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isSubmitting ? 'Submitting...' : 'Submit Check-in Proof'}
+                {isSubmitting ? 'Cancelling...' : 'Cancel Booking'}
               </button>
             </div>
+          ) : null}
 
-            {canCheckout ? (
-              <div className="rounded-xl border border-slate-200 p-4">
-                <p className="text-sm font-semibold text-slate-800">Checkout</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  Available after booking end time. This will send checkout status to owner.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleSubmitCheckout();
-                  }}
-                  disabled={isSubmitting}
-                  className="mt-3 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isSubmitting ? 'Submitting...' : 'Send Checkout Status'}
-                </button>
-              </div>
-            ) : null}
-          </div>
+          {!isFinalizedBooking && booking.status.toUpperCase() !== 'WAITING_FOR_PAYMENT' ? (
+            <div className="mt-6 space-y-4">
+              {!booking.timeFlags.hasCheckinProof ? (
+                <div className="rounded-xl border border-slate-200 p-4">
+                  <p className="text-sm font-semibold text-slate-800">Check-in</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Available only in booking time after payment approval.
+                  </p>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleCheckinProofChange}
+                    className="mt-3 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleSubmitCheckin();
+                    }}
+                    disabled={!canCheckin || !checkinProofFile || isSubmitting}
+                    className="mt-3 rounded-lg bg-[#5B7CFF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#4a6bef] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isSubmitting ? 'Submitting...' : 'Submit Check-in Proof'}
+                  </button>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+                  Check-in proof already submitted.
+                </div>
+              )}
+
+              {booking.timeFlags.hasCheckinProof || canCancelCheckout ? (
+                <div className="rounded-xl border border-slate-200 p-4">
+                  <p className="text-sm font-semibold text-slate-800">Checkout</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {canCancelCheckout
+                      ? 'Checkout request already sent. You can cancel it before owner review.'
+                      : canCheckout
+                        ? 'Ready to send checkout status to owner immediately after check-in.'
+                        : 'Checkout section is available after check-in proof is submitted.'}
+                  </p>
+                  {canCheckout ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleSubmitCheckout();
+                      }}
+                      disabled={isSubmitting}
+                      className="mt-3 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isSubmitting ? 'Submitting...' : 'Send Checkout Status'}
+                    </button>
+                  ) : null}
+                  {canCancelCheckout ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleCancelCheckout();
+                      }}
+                      disabled={isSubmitting}
+                      className="mt-3 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isSubmitting ? 'Cancelling...' : 'Cancel Checkout'}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

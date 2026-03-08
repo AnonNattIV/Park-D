@@ -3,6 +3,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { deletePaymentProofByUrl, uploadPaymentProof } from '@/lib/storage';
+import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,7 @@ interface BookingPaymentRow extends RowDataPacket {
   checkin_datetime: Date | string | null;
   checkout_datetime: Date | string | null;
   price: number | string;
+  is_after_checkin: number | string;
 }
 
 interface ExistingPaymentRow extends RowDataPacket {
@@ -91,6 +93,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    try {
+      await runBookingCheckoutAutomation();
+    } catch (automationError) {
+      console.error('Unable to run booking checkout automation:', automationError);
+    }
+
     const formData = await request.formData();
     const rawBookingId = formData.get('bookingId');
     const proofFile = formData.get('proof');
@@ -139,7 +147,12 @@ export async function POST(request: NextRequest) {
         b.b_status,
         b.checkin_datetime,
         b.checkout_datetime,
-        pl.price
+        pl.price,
+        CASE
+          WHEN b.checkin_datetime IS NOT NULL
+           AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') >= b.checkin_datetime
+          THEN 1 ELSE 0
+        END AS is_after_checkin
       FROM bookings b
       INNER JOIN parking_lots pl ON pl.lot_id = b.lot_id
       WHERE b.b_id = ?
@@ -159,6 +172,31 @@ export async function POST(request: NextRequest) {
     if (booking.b_status !== 'WAITING_FOR_PAYMENT') {
       return NextResponse.json(
         { error: 'This booking is not available for payment' },
+        { status: 409 }
+      );
+    }
+
+    if (Number(booking.is_after_checkin) === 1) {
+      await pool.query(
+        `UPDATE bookings
+        SET b_status = 'CANCELLED',
+            updated_at = NOW()
+        WHERE b_id = ?
+          AND b_status = 'WAITING_FOR_PAYMENT'`,
+        [bookingId]
+      );
+
+      await pool.query(
+        `UPDATE payments
+        SET pay_status = CASE WHEN pay_status = 'PENDING' THEN 'FAILED' ELSE pay_status END,
+            updated_at = NOW()
+        WHERE b_id = ?
+          AND pay_status IN ('PENDING', 'FAILED')`,
+        [bookingId]
+      );
+
+      return NextResponse.json(
+        { error: 'Reservation time started before payment approval. Booking cancelled automatically.' },
         { status: 409 }
       );
     }

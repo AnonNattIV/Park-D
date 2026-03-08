@@ -58,6 +58,7 @@ interface ParkingLotRequestItem {
   ownerUserId: number;
   ownerUsername: string;
   ownerName: string;
+  ownerEvidenceUrl?: string | null;
   submittedAt: string;
   status: ParkingLotRequestStatus;
 }
@@ -829,6 +830,18 @@ export default function AdminHomePage() {
                             Slots: {item.totalSlot} | Price: {item.price.toLocaleString('th-TH')} THB/hr
                           </p>
                           <p className="text-sm text-slate-500">Submitted: {formatSubmittedAt(item.submittedAt)}</p>
+                          {item.ownerEvidenceUrl ? (
+                            <a
+                              href={item.ownerEvidenceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                            >
+                              Open Owner Evidence
+                            </a>
+                          ) : (
+                            <p className="text-xs text-rose-600">No owner evidence file.</p>
+                          )}
                         </div>
 
                         <div className="min-w-[300px] space-y-2">

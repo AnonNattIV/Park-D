@@ -3,6 +3,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { parseBangkokDateTimeInput } from '@/lib/time-bangkok';
+import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
 
 interface TokenPayload {
   userId?: string;
@@ -11,6 +12,7 @@ interface TokenPayload {
 
 interface ParkingLotBookingRow extends RowDataPacket {
   lot_id: number;
+  owner_user_id: number;
   lot_name: string | null;
   location: string;
   total_slot: number | string;
@@ -62,6 +64,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    try {
+      await runBookingCheckoutAutomation();
+    } catch (automationError) {
+      console.error('Unable to run booking checkout automation:', automationError);
+    }
+
     const body = await request.json();
     const lotId = Number(body?.lotId);
     const plateId = typeof body?.plateId === 'string' ? body.plateId.trim() : '';
@@ -111,6 +119,7 @@ export async function POST(request: NextRequest) {
     const [lotRows] = await pool.query<ParkingLotBookingRow[]>(
       `SELECT
         lot_id,
+        owner_user_id,
         lot_name,
         location,
         total_slot,
@@ -131,6 +140,13 @@ export async function POST(request: NextRequest) {
     }
 
     const lot = lotRows[0];
+    if (Number(lot.owner_user_id) === requester.userId) {
+      return NextResponse.json(
+        { error: 'You cannot rent your own parking lot' },
+        { status: 403 }
+      );
+    }
+
     const totalSlot = Number(lot.total_slot || 0);
 
     const [activeBookingRows] = await pool.query<ActiveBookingsRow[]>(
@@ -141,7 +157,10 @@ export async function POST(request: NextRequest) {
         AND (
           checkin_datetime IS NULL
           OR checkout_datetime IS NULL
-          OR (checkin_datetime < ? AND checkout_datetime > ?)
+          OR (
+            checkin_datetime < ?
+            AND DATE_ADD(checkout_datetime, INTERVAL 30 MINUTE) > ?
+          )
         )`,
       [
         lotId,

@@ -60,6 +60,15 @@ AWS_ENDPOINT_URL=https://your-s3-endpoint
 AWS_ACCESS_KEY_ID=your-key
 AWS_SECRET_ACCESS_KEY=your-secret
 AWS_DEFAULT_REGION=auto
+
+# Translation API (optional but recommended for Thai/English parking text conversion)
+# TRANSLATION_PROVIDER=google
+# GOOGLE_TRANSLATE_API_KEY=your-google-translate-key
+#
+# or use LibreTranslate-compatible API:
+# TRANSLATION_PROVIDER=libretranslate
+# LIBRE_TRANSLATE_URL=https://your-libretranslate-endpoint/translate
+# LIBRE_TRANSLATE_API_KEY=your-libretranslate-key
 ```
 
 Notes:

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import Tabbar from '@/components/Tabbar';
@@ -28,6 +28,7 @@ interface ParkingForm {
   rulesText: string;
   description: string;
   images: File[];
+  ownershipEvidenceFile: File | null;
 }
 
 interface ParkingLotCreateResponse {
@@ -36,7 +37,7 @@ interface ParkingLotCreateResponse {
   error?: string;
 }
 
-type FormField = keyof Omit<ParkingForm, 'images'>;
+type FormField = keyof Omit<ParkingForm, 'images' | 'ownershipEvidenceFile'>;
 type PinSource = 'none' | 'gps' | 'address' | 'manual';
 
 function createInitialFormData(): ParkingForm {
@@ -56,6 +57,7 @@ function createInitialFormData(): ParkingForm {
     rulesText: '',
     description: '',
     images: [],
+    ownershipEvidenceFile: null,
   };
 }
 
@@ -216,6 +218,17 @@ export default function ParkingSpacePage() {
 
   const handleImagesChange = (images: File[]) => {
     setFormData((prev) => ({ ...prev, images }));
+    if (submitError) {
+      setSubmitError('');
+    }
+  };
+
+  const handleOwnershipEvidenceChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null;
+    setFormData((prev) => ({ ...prev, ownershipEvidenceFile: file }));
+    if (submitError) {
+      setSubmitError('');
+    }
   };
 
   const handleMapCoordinateChange = useCallback(
@@ -344,7 +357,9 @@ export default function ParkingSpacePage() {
   }, []);
 
   const validateForm = (): boolean => {
+    setSubmitError('');
     const newErrors: Partial<Record<FormField, string>> = {};
+    const submitErrors: string[] = [];
 
     if (!formData.name.trim()) {
       newErrors.name = 'กรุณากรอกชื่อพื้นที่จอดรถ';
@@ -397,8 +412,24 @@ export default function ParkingSpacePage() {
       newErrors.pricePerHour = 'ราคาต้องมากกว่า 0';
     }
 
+    if (formData.images.length === 0) {
+      submitErrors.push('Please upload at least one parking lot image');
+    }
+
+    if (!formData.ownershipEvidenceFile) {
+      submitErrors.push('Please upload ownership evidence file (pdf/image)');
+    }
+
+    if (submitErrors.length > 0) {
+      setSubmitError(submitErrors.join(' | '));
+    }
+
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return (
+      Object.keys(newErrors).length === 0 &&
+      formData.images.length > 0 &&
+      Boolean(formData.ownershipEvidenceFile)
+    );
   };
 
   const handleSubmit = async () => {
@@ -410,28 +441,34 @@ export default function ParkingSpacePage() {
     setIsSubmitting(true);
 
     try {
+      const requestBody = new FormData();
+      requestBody.append('lotName', formData.name);
+      requestBody.append('addressLine', formData.addressLine);
+      requestBody.append('streetNumber', formData.streetNumber);
+      requestBody.append('district', formData.district);
+      requestBody.append('amphoe', formData.amphoe);
+      requestBody.append('subdistrict', formData.subdistrict);
+      requestBody.append('province', formData.province);
+      requestBody.append('latitude', String(Number(formData.latitude)));
+      requestBody.append('longitude', String(Number(formData.longitude)));
+      requestBody.append('totalSlot', String(formData.totalSlots));
+      requestBody.append('price', String(formData.pricePerHour));
+      requestBody.append('vehicleTypes', JSON.stringify(parseListField(formData.vehicleTypesText)));
+      requestBody.append('rules', JSON.stringify(parseListField(formData.rulesText)));
+      requestBody.append('description', formData.description);
+      formData.images.forEach((file) => {
+        requestBody.append('images', file);
+      });
+      if (formData.ownershipEvidenceFile) {
+        requestBody.append('ownershipEvidence', formData.ownershipEvidenceFile);
+      }
+
       const response = await fetch('/api/parking-lots/system', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          lotName: formData.name,
-          addressLine: formData.addressLine,
-          streetNumber: formData.streetNumber,
-          district: formData.district,
-          amphoe: formData.amphoe,
-          subdistrict: formData.subdistrict,
-          province: formData.province,
-          latitude: Number(formData.latitude),
-          longitude: Number(formData.longitude),
-          totalSlot: formData.totalSlots,
-          price: formData.pricePerHour,
-          vehicleTypes: parseListField(formData.vehicleTypesText),
-          rules: parseListField(formData.rulesText),
-          description: formData.description,
-        }),
+        body: requestBody,
       });
 
       const result = (await response.json()) as ParkingLotCreateResponse;
@@ -798,7 +835,34 @@ export default function ParkingSpacePage() {
             images={formData.images}
             onImagesChange={handleImagesChange}
             maxImages={5}
+            required
+            helperText="First uploaded image is used as cover on parking detail page."
+            errorMessage={
+              submitError && formData.images.length === 0
+                ? 'Please upload at least one parking lot image'
+                : undefined
+            }
           />
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              Ownership Evidence (PDF/Image) <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="file"
+              accept="application/pdf,image/*"
+              onChange={handleOwnershipEvidenceChange}
+              className="block w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm transition-all duration-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Upload legal proof that you own/operate this parking lot (PDF or image, max 10 MB)
+            </p>
+            {formData.ownershipEvidenceFile ? (
+              <p className="mt-1 text-xs text-emerald-600">
+                Selected file: {formData.ownershipEvidenceFile.name}
+              </p>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

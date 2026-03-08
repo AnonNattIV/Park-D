@@ -2,12 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
+import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 
 export default function LoginPage() {
   const [formData, setFormData] = useState({
     username: '',
     password: '',
   });
+  const [showPassword, setShowPassword] = useState(false);
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -70,7 +72,7 @@ export default function LoginPage() {
 
       const directRole = String(loginResult.user?.role || '').toLowerCase();
       if (directRole === 'admin') {
-        setSuccessMessage('Login successful. Redirecting to /admin...');
+        setSuccessMessage('Login successful. Redirecting to your dashboard...');
         setTimeout(() => {
           window.location.href = '/admin';
         }, 600);
@@ -89,7 +91,7 @@ export default function LoginPage() {
         if (userResult?.user) {
           localStorage.setItem('auth_user', JSON.stringify(userResult.user));
           const redirectPath = getRedirectPathByRole(userResult.user.role);
-          setSuccessMessage(`Login successful. Redirecting to ${redirectPath}...`);
+          setSuccessMessage('Login successful. Redirecting to your dashboard...');
           setTimeout(() => {
             window.location.href = redirectPath;
           }, 600);
@@ -98,7 +100,7 @@ export default function LoginPage() {
       }
 
       const fallbackRedirectPath = getRedirectPathByRole(loginResult.user?.role);
-      setSuccessMessage(`Login successful. Redirecting to ${fallbackRedirectPath}...`);
+      setSuccessMessage('Login successful. Redirecting to your dashboard...');
       setTimeout(() => {
         window.location.href = fallbackRedirectPath;
       }, 600);
@@ -278,29 +280,34 @@ export default function LoginPage() {
             {/* Password Input */}
             <div className="relative group">
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 placeholder="Password"
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                 required
-                className="w-full px-5 py-4 bg-white/60 backdrop-blur-sm rounded-xl text-gray-700 placeholder-gray-400 border border-white/30
+                className="w-full px-5 py-4 pr-14 bg-white/60 backdrop-blur-sm rounded-xl text-gray-700 placeholder-gray-400 border border-white/30
                   focus:outline-none focus:ring-2 focus:ring-[#5B7CFF] focus:bg-white/90
                   focus:shadow-lg
                   transition-all duration-300 ease-in-out
                   group-hover:bg-white/70
                 "
               />
-              <span
+              <button
+                type="button"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                onClick={() => setShowPassword((prev) => !prev)}
                 className={`
-                  absolute right-4 top-1/2 -translate-y-1/2 text-gray-400
+                  absolute inset-y-0 right-4 flex items-center text-gray-400
                   transition-all duration-300 ease-in-out
                   group-hover:text-[#5B7CFF] group-hover:scale-110
                 `}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-              </span>
+                {showPassword ? (
+                  <EyeSlashIcon className="h-5 w-5" />
+                ) : (
+                  <EyeIcon className="h-5 w-5" />
+                )}
+              </button>
             </div>
 
             {/* Forgot Password Link */}

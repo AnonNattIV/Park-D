@@ -39,14 +39,19 @@ interface AutoApprovalCandidateRow extends RowDataPacket {
   late_minutes: number | string;
 }
 
+interface AutoUnpaidCancellationCandidateRow extends RowDataPacket {
+  b_id: number;
+}
+
 interface SettlementComputation {
   payAmount: number;
   rentAmount: number;
   ownerShare: number;
   platformShare: number;
-  baseRefund: number;
+  depositAmount: number;
   lateMinutes: number;
   penaltyAmount: number;
+  penaltyExcess: number;
   renterRefund: number;
   ownerBonus: number;
 }
@@ -92,34 +97,39 @@ function computeSettlementAmounts(
 ): SettlementComputation {
   // Settlement model:
   // - payer transfers 150% of rent at payment time
-  // - owner gets 80% of rent (+ optional bonus from forfeited refund)
-  // - renter gets 50% base refund minus late penalties (or zero when forfeited)
+  // - owner gets 80% of booked rent + penalty (or full deposit when checkout denied)
+  // - renter gets deposit refund minus late penalties (or zero when forfeited)
   const isPaid = booking.pay_status === 'PAID';
   const payAmount = isPaid ? Number(booking.pay_amount || 0) : 0;
-  const totalMinutes = Number(booking.total_minutes || 0);
   const price = Number(booking.price || 0);
-  const rentAmount = isPaid ? roundMoney((totalMinutes / 60) * price) : 0;
+  // Keep booked rent static from payment amount, independent of actual usage/check-out submit time.
+  const rentAmount = isPaid ? roundMoney(payAmount / 1.5) : 0;
   const ownerShare = isPaid ? roundMoney(rentAmount * 0.8) : 0;
   const platformShare = isPaid ? roundMoney(rentAmount * 0.2) : 0;
-  const baseRefund = isPaid ? roundMoney(payAmount * 0.5) : 0;
+  const depositAmount = isPaid ? roundMoney(payAmount - rentAmount) : 0;
 
   const lateMinutes = Math.max(0, Math.floor(Number(policy.lateMinutes || 0)));
+  // Late penalty uses full hourly rate x late usage time.
   const penaltyAmount = isPaid ? roundMoney((lateMinutes / 60) * price) : 0;
   const forceForfeitHalf = Boolean(policy.forceForfeitHalf);
 
   const renterRefund = forceForfeitHalf
     ? 0
-    : Math.max(0, roundMoney(baseRefund - penaltyAmount));
-  const ownerBonus = roundMoney(baseRefund - renterRefund);
+    : Math.max(0, roundMoney(depositAmount - penaltyAmount));
+  const ownerBonus = forceForfeitHalf ? depositAmount : penaltyAmount;
+  const penaltyExcess = forceForfeitHalf
+    ? 0
+    : Math.max(0, roundMoney(penaltyAmount - depositAmount));
 
   return {
     payAmount,
     rentAmount,
     ownerShare,
     platformShare,
-    baseRefund,
+    depositAmount,
     lateMinutes,
     penaltyAmount,
+    penaltyExcess,
     renterRefund,
     ownerBonus,
   };
@@ -129,12 +139,12 @@ async function creditWallet(
   connection: PoolConnection,
   userId: number,
   amount: number,
-  txType: 'TOPUP' | 'REFUND',
+  txType: 'TOPUP' | 'REFUND' | 'DEBIT',
   bookingId: number,
   paymentId: number | null,
   note: string
 ): Promise<void> {
-  if (amount <= 0) {
+  if (amount === 0) {
     return;
   }
 
@@ -297,8 +307,20 @@ export async function finalizeCheckoutWithSettlement(
     'TOPUP',
     bookingId,
     paymentId,
-    `Checkout settlement owner payout (${reason})`
+    'Income from parking lot checkout'
   );
+
+  if (amounts.penaltyExcess > 0) {
+    await creditWallet(
+      connection,
+      Number(booking.renter_user_id),
+      -amounts.penaltyExcess,
+      'DEBIT',
+      bookingId,
+      paymentId,
+      'Late checkout penalty charge'
+    );
+  }
 
   await creditWallet(
     connection,
@@ -307,7 +329,7 @@ export async function finalizeCheckoutWithSettlement(
     'REFUND',
     bookingId,
     paymentId,
-    `Checkout settlement renter refund (${reason})`
+    'Deposit returned after checkout'
   );
 
   return { didSettle: true };
@@ -350,6 +372,78 @@ async function runAutoNoCheckinCheckout(): Promise<void> {
   }
 }
 
+async function runAutoCancelUnpaidReservations(): Promise<void> {
+  // Auto-cancel unpaid bookings:
+  // 1) no payment submitted within 10 minutes after booking creation
+  // 2) payment still not approved when reservation (check-in) time starts
+  const pool = getPool();
+  const [rows] = await pool.query<AutoUnpaidCancellationCandidateRow[]>(
+    `SELECT b.b_id
+    FROM bookings b
+    LEFT JOIN payments p ON p.b_id = b.b_id
+    WHERE b.b_status = 'WAITING_FOR_PAYMENT'
+      AND (
+        (
+          p.pay_id IS NULL
+          AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') >= DATE_ADD(b.booking_time, INTERVAL 10 MINUTE)
+        )
+        OR (
+          b.checkin_datetime IS NOT NULL
+          AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') >= b.checkin_datetime
+          AND (p.pay_id IS NULL OR p.pay_status <> 'PAID')
+        )
+      )
+    ORDER BY b.booking_time ASC
+    LIMIT 200`
+  );
+
+  for (const row of rows) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [bookingUpdateResult] = await connection.query<ResultSetHeader>(
+        `UPDATE bookings b
+        LEFT JOIN payments p ON p.b_id = b.b_id
+        SET b.b_status = 'CANCELLED',
+            b.updated_at = NOW()
+        WHERE b.b_id = ?
+          AND b.b_status = 'WAITING_FOR_PAYMENT'
+          AND (
+            (
+              p.pay_id IS NULL
+              AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') >= DATE_ADD(b.booking_time, INTERVAL 10 MINUTE)
+            )
+            OR (
+              b.checkin_datetime IS NOT NULL
+              AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') >= b.checkin_datetime
+              AND (p.pay_id IS NULL OR p.pay_status <> 'PAID')
+            )
+          )`,
+        [Number(row.b_id)]
+      );
+
+      if (bookingUpdateResult.affectedRows > 0) {
+        await connection.query(
+          `UPDATE payments
+          SET pay_status = CASE WHEN pay_status = 'PENDING' THEN 'FAILED' ELSE pay_status END,
+              updated_at = NOW()
+          WHERE b_id = ?
+            AND pay_status IN ('PENDING', 'FAILED')`,
+          [Number(row.b_id)]
+        );
+      }
+
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      console.error('Auto cancel unpaid reservation failed:', error);
+    } finally {
+      connection.release();
+    }
+  }
+}
+
 async function runAutoCheckoutApprovalAfter7Hours(): Promise<void> {
   // Auto-approve owner checkout review if request stays in CHECKING_OUT for too long.
   const pool = getPool();
@@ -360,14 +454,14 @@ async function runAutoCheckoutApprovalAfter7Hours(): Promise<void> {
         TIMESTAMPDIFF(
           MINUTE,
           checkout_datetime,
-          CONVERT_TZ(updated_at, '+00:00', '+07:00')
+          updated_at
         ),
         0
       ) AS late_minutes
     FROM bookings
     WHERE b_status = 'CHECKING_OUT'
       AND checkout_datetime IS NOT NULL
-      AND UTC_TIMESTAMP() >= DATE_ADD(updated_at, INTERVAL 7 HOUR)
+      AND NOW() >= DATE_ADD(updated_at, INTERVAL 7 HOUR)
     ORDER BY updated_at ASC
     LIMIT 200`
   );
@@ -397,6 +491,7 @@ async function runAutoCheckoutApprovalAfter7Hours(): Promise<void> {
 }
 
 export async function runBookingCheckoutAutomation(): Promise<void> {
+  await runAutoCancelUnpaidReservations();
   await runAutoNoCheckinCheckout();
   await runAutoCheckoutApprovalAfter7Hours();
 }

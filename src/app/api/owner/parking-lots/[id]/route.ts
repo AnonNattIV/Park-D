@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
+import { ensureParkingLotMetadataSchema } from '@/lib/parking-lot-metadata';
+import { translateTextsToEnglish, translateTextsToThai } from '@/lib/translation-api';
 
 export const dynamic = 'force-dynamic';
 
@@ -186,17 +188,7 @@ async function readParkingLotMetadata(
   lotId: number
 ): Promise<{ vehicleTypes: string[]; rules: string[] }> {
   const pool = getPool();
-  const [tableRows] = await pool.query<RowDataPacket[]>(
-    `SELECT 1
-    FROM information_schema.tables
-    WHERE table_schema = DATABASE()
-      AND table_name = 'parking_lot_metadata'
-    LIMIT 1`
-  );
-
-  if (tableRows.length === 0) {
-    return { vehicleTypes: [], rules: [] };
-  }
+  await ensureParkingLotMetadataSchema();
 
   const [metadataRows] = await pool.query<ParkingLotMetadataRow[]>(
     `SELECT vehicle_types_json, rules_json
@@ -337,6 +329,21 @@ export async function PATCH(
         : Number(body.longitude);
     const vehicleTypes = normalizeStringArray(body?.vehicleTypes);
     const rules = normalizeStringArray(body?.rules);
+    const nameEn = name;
+    let addressLineEn = '';
+    let streetNumberEn = '';
+    let districtEn = '';
+    let amphoeEn = '';
+    let subdistrictEn = '';
+    let provinceEn = '';
+    const nameTh = name;
+    let addressLineTh = '';
+    let streetNumberTh = '';
+    let districtTh = '';
+    let amphoeTh = '';
+    let subdistrictTh = '';
+    let provinceTh = '';
+    let locationTh = '';
 
     if (!name) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
@@ -397,13 +404,40 @@ export async function PATCH(
       }
     }
 
+    [addressLineEn, streetNumberEn, districtEn, amphoeEn, subdistrictEn, provinceEn] =
+      await translateTextsToEnglish([
+        addressLine,
+        streetNumber,
+        district,
+        amphoe,
+        subdistrict,
+        province,
+      ]);
+    [addressLineTh, streetNumberTh, districtTh, amphoeTh, subdistrictTh, provinceTh] =
+      await translateTextsToThai([
+        addressLine,
+        streetNumber,
+        district,
+        amphoe,
+        subdistrict,
+        province,
+      ]);
+    locationTh = buildLocationLabel({
+      addressLine: addressLineTh,
+      streetNumber: streetNumberTh,
+      district: districtTh,
+      amphoe: amphoeTh,
+      subdistrict: subdistrictTh,
+      province: provinceTh,
+    });
+
     const location = buildLocationLabel({
-      addressLine,
-      streetNumber,
-      district,
-      amphoe,
-      subdistrict,
-      province,
+      addressLine: addressLineEn,
+      streetNumber: streetNumberEn,
+      district: districtEn,
+      amphoe: amphoeEn,
+      subdistrict: subdistrictEn,
+      province: provinceEn,
     });
 
     if (!location) {
@@ -435,15 +469,15 @@ export async function PATCH(
       WHERE lot_id = ?
       LIMIT 1`,
       [
-        name,
+        nameEn,
         description || null,
         location,
-        addressLine,
-        streetNumber,
-        district,
-        amphoe,
-        subdistrict,
-        province,
+        addressLineEn,
+        streetNumberEn,
+        districtEn,
+        amphoeEn,
+        subdistrictEn,
+        provinceEn,
         rawLatitude,
         rawLongitude,
         totalSlots,
@@ -454,35 +488,47 @@ export async function PATCH(
     );
 
     try {
-      await pool.query(
-        `CREATE TABLE IF NOT EXISTS parking_lot_metadata (
-          lot_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-          vehicle_types_json TEXT NULL,
-          rules_json TEXT NULL,
-          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          CONSTRAINT fk_parking_lot_metadata_lot
-            FOREIGN KEY (lot_id) REFERENCES parking_lots(lot_id)
-            ON DELETE CASCADE
-            ON UPDATE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-      );
+      await ensureParkingLotMetadataSchema();
 
       await pool.query(
         `INSERT INTO parking_lot_metadata (
           lot_id,
           vehicle_types_json,
-          rules_json
+          rules_json,
+          display_lot_name_th,
+          display_location_th,
+          display_address_line_th,
+          display_street_number_th,
+          display_district_th,
+          display_amphoe_th,
+          display_subdistrict_th,
+          display_province_th
         )
-        VALUES (?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           vehicle_types_json = VALUES(vehicle_types_json),
           rules_json = VALUES(rules_json),
+          display_lot_name_th = VALUES(display_lot_name_th),
+          display_location_th = VALUES(display_location_th),
+          display_address_line_th = VALUES(display_address_line_th),
+          display_street_number_th = VALUES(display_street_number_th),
+          display_district_th = VALUES(display_district_th),
+          display_amphoe_th = VALUES(display_amphoe_th),
+          display_subdistrict_th = VALUES(display_subdistrict_th),
+          display_province_th = VALUES(display_province_th),
           updated_at = CURRENT_TIMESTAMP`,
         [
           lotId,
           vehicleTypes.length > 0 ? JSON.stringify(vehicleTypes) : null,
           rules.length > 0 ? JSON.stringify(rules) : null,
+          nameTh || null,
+          locationTh || null,
+          addressLineTh || null,
+          streetNumberTh || null,
+          districtTh || null,
+          amphoeTh || null,
+          subdistrictTh || null,
+          provinceTh || null,
         ]
       );
     } catch (metadataError) {

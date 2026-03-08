@@ -12,6 +12,14 @@ type Review = {
   username: string;
 };
 
+type Reservation = {
+  id: number;
+  status: string;
+  checkinTime: string | null;
+  checkoutTime: string | null;
+  blockedUntilTime: string | null;
+};
+
 type LotDetail = {
   id: number;
   name: string;
@@ -25,10 +33,12 @@ type LotDetail = {
   latitude: number | null;
   longitude: number | null;
   mapEmbedUrl: string | null;
+  imageUrls?: string[];
 };
 
 type ParkingData = {
   lot: LotDetail;
+  reservations?: Reservation[];
   reviews: Review[];
   vehicleTypes?: string[];
   rules?: string[];
@@ -41,6 +51,7 @@ const avatarGradients = [
   'from-purple-500 to-indigo-500',
   'from-amber-400 to-orange-500',
 ];
+const BANGKOK_TIME_ZONE = 'Asia/Bangkok';
 
 function formatPrice(value: number): string {
   if (!Number.isFinite(value)) {
@@ -54,6 +65,38 @@ function formatPrice(value: number): string {
   })} บาท/ชม.`;
 }
 
+function formatDateTimeLabel(value: string | null): string {
+  if (!value) {
+    return '-';
+  }
+
+  const directDate = new Date(value);
+  if (!Number.isNaN(directDate.getTime())) {
+    return directDate.toLocaleString('th-TH', {
+      timeZone: BANGKOK_TIME_ZONE,
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  const normalizedValue = value.includes('T') ? value : value.replace(' ', 'T');
+  const fallbackDate = new Date(normalizedValue);
+  if (Number.isNaN(fallbackDate.getTime())) {
+    return '-';
+  }
+
+  return fallbackDate.toLocaleString('th-TH', {
+    timeZone: BANGKOK_TIME_ZONE,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 export default function ParkingDetailPage() {
   const params = useParams();
   const rawId = params?.id;
@@ -179,8 +222,11 @@ export default function ParkingDetailPage() {
   }
 
   const { lot, reviews } = data;
+  const reservations = data.reservations || [];
   const vehicleTypes = data.vehicleTypes || [];
   const rules = data.rules || [];
+  const canViewPrice = isAuthenticated;
+  const coverImageUrl = lot.imageUrls?.[0] || null;
 
   return (
     <div className="relative min-h-screen bg-gray-50 pb-28">
@@ -202,7 +248,14 @@ export default function ParkingDetailPage() {
           <div className="space-y-6">
             <div className="rounded-2xl bg-white p-6 shadow-md">
               <div className="relative h-64 overflow-hidden rounded-xl bg-slate-100">
-                {lot.mapEmbedUrl ? (
+                {coverImageUrl ? (
+                  <img
+                    src={coverImageUrl}
+                    alt={`Parking image of ${lot.name}`}
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                  />
+                ) : lot.mapEmbedUrl ? (
                   <iframe
                     title={`Map of ${lot.name}`}
                     src={lot.mapEmbedUrl}
@@ -212,7 +265,7 @@ export default function ParkingDetailPage() {
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center text-slate-500">
-                    แผนที่ไม่พร้อมใช้งาน
+                    Map unavailable
                   </div>
                 )}
               </div>
@@ -233,7 +286,9 @@ export default function ParkingDetailPage() {
               <div className="mb-4 flex flex-wrap gap-4">
                 <div className="rounded-lg bg-blue-50 px-4 py-2 text-blue-700">
                   <span className="block text-xs font-semibold uppercase opacity-70">ราคา</span>
-                  <span className="text-lg font-bold">{formatPrice(lot.price)}</span>
+                  <span className="text-lg font-bold">
+                    {canViewPrice ? formatPrice(lot.price) : 'Login to view price'}
+                  </span>
                 </div>
                 <div className="rounded-lg bg-green-50 px-4 py-2 text-green-700">
                   <span className="block text-xs font-semibold uppercase opacity-70">ช่องจอด</span>
@@ -311,6 +366,24 @@ export default function ParkingDetailPage() {
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow-md">
+              <h2 className="mb-4 text-xl font-bold text-gray-800">Reservation List</h2>
+              {reservations.length > 0 ? (
+                <div className="space-y-1 text-sm text-slate-600">
+                  {reservations.map((reservation) => (
+                    <p key={`reservation-${reservation.id}-${reservation.checkinTime || 'none'}`}>
+                      {formatDateTimeLabel(reservation.checkinTime)} -{' '}
+                      {formatDateTimeLabel(reservation.blockedUntilTime || reservation.checkoutTime)}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  No reservation time in current window.
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-2xl bg-white p-6 shadow-md">
               <h2 className="mb-4 text-xl font-bold text-gray-800">ตำแหน่งที่ตั้ง</h2>
               <div className="relative h-64 overflow-hidden rounded-xl bg-gray-100">
                 {lot.mapEmbedUrl ? (
@@ -357,3 +430,5 @@ export default function ParkingDetailPage() {
     </div>
   );
 }
+
+

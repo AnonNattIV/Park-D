@@ -8,17 +8,17 @@ export const dynamic = 'force-dynamic';
 
 type TokenPayload = {
   userId?: string;
-  role?: string;
 };
 
 interface BookingCancelRow extends RowDataPacket {
   b_id: number;
   user_id: number;
-  owner_user_id: number;
   b_status: string;
+  checkin_datetime: Date | string | null;
   pay_id: number | null;
   pay_status: string | null;
   pay_amount: number | string | null;
+  is_before_checkin: number | string;
 }
 
 interface WalletLockRow extends RowDataPacket {
@@ -26,7 +26,16 @@ interface WalletLockRow extends RowDataPacket {
   balance: number | string;
 }
 
-function readRequester(request: NextRequest): { userId: number; role: string } | null {
+function parseBookingId(rawId: string): number | null {
+  const parsed = Number(rawId);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function readRequesterUserId(request: NextRequest): number | null {
   const authorization = request.headers.get('authorization') || '';
   if (!authorization.startsWith('Bearer ')) {
     return null;
@@ -39,35 +48,21 @@ function readRequester(request: NextRequest): { userId: number; role: string } |
 
   const payload = verifyToken(token) as TokenPayload | null;
   const userId = Number(payload?.userId);
-  const role = payload?.role?.toLowerCase() || '';
 
   if (!payload || !Number.isInteger(userId) || userId <= 0) {
     return null;
   }
 
-  return { userId, role };
-}
-
-function parseBookingId(rawId: string): number | null {
-  const parsedId = Number(rawId);
-  if (!Number.isInteger(parsedId) || parsedId <= 0) {
-    return null;
-  }
-
-  return parsedId;
+  return userId;
 }
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const requester = readRequester(request);
-  if (!requester) {
+  const requesterUserId = readRequesterUserId(request);
+  if (!requesterUserId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  if (requester.role !== 'owner' && requester.role !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const bookingId = parseBookingId(params.id);
@@ -83,12 +78,16 @@ export async function PATCH(
         b.b_id,
         b.user_id,
         b.b_status,
-        pl.owner_user_id,
+        b.checkin_datetime,
         p.pay_id,
         p.pay_status,
-        p.pay_amount
+        p.pay_amount,
+        CASE
+          WHEN b.checkin_datetime IS NOT NULL
+           AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') <= DATE_SUB(b.checkin_datetime, INTERVAL 1 DAY)
+          THEN 1 ELSE 0
+        END AS is_before_checkin
       FROM bookings b
-      INNER JOIN parking_lots pl ON pl.lot_id = b.lot_id
       LEFT JOIN payments p ON p.b_id = b.b_id
       WHERE b.b_id = ?
       LIMIT 1`,
@@ -100,23 +99,24 @@ export async function PATCH(
     }
 
     const booking = rows[0];
-    const isOwnerOfBooking = Number(booking.owner_user_id) === requester.userId;
-    const isAdmin = requester.role === 'admin';
-
-    if (!isOwnerOfBooking && !isAdmin) {
+    if (Number(booking.user_id) !== requesterUserId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     if (booking.b_status === 'CANCELLED') {
-      return NextResponse.json(
-        { error: 'Booking is already cancelled' },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: 'Booking is already cancelled' }, { status: 409 });
     }
 
     if (booking.b_status === 'CHECKOUT_APPROVED') {
       return NextResponse.json(
         { error: 'Completed booking cannot be cancelled' },
+        { status: 409 }
+      );
+    }
+
+    if (Number(booking.is_before_checkin) !== 1) {
+      return NextResponse.json(
+        { error: 'Booking can be cancelled only at least 1 day before reservation time' },
         { status: 409 }
       );
     }
@@ -130,17 +130,14 @@ export async function PATCH(
     try {
       await connection.beginTransaction();
 
-      const normalizedPaymentStatus = (booking.pay_status || '').toUpperCase();
-      const shouldRefundImmediately =
+      const shouldRefund =
         booking.pay_id !== null &&
         Number(booking.pay_amount || 0) > 0 &&
-        normalizedPaymentStatus === 'PAID';
-      const pendingPaymentNeedsAdminReview =
-        booking.pay_id !== null &&
-        Number(booking.pay_amount || 0) > 0 &&
-        normalizedPaymentStatus === 'PENDING';
+        booking.pay_status !== 'REFUNDED' &&
+        booking.pay_status !== 'CANCELLED' &&
+        booking.pay_status !== 'FAILED';
 
-      if (shouldRefundImmediately && booking.pay_id !== null) {
+      if (shouldRefund && booking.pay_id !== null) {
         refundedAmount = Number(booking.pay_amount || 0);
 
         await ensureUserWallet(connection, Number(booking.user_id));
@@ -192,7 +189,7 @@ export async function PATCH(
             refundedAmount,
             balanceBefore,
             walletBalanceAfter,
-            'Owner cancelled booking. Auto refund.',
+            'Renter cancelled booking at least 1 day before reservation. Auto refund.',
           ]
         );
 
@@ -209,8 +206,9 @@ export async function PATCH(
         `UPDATE bookings
         SET b_status = 'CANCELLED',
             updated_at = NOW()
-        WHERE b_id = ?`,
-        [bookingId]
+        WHERE b_id = ?
+          AND user_id = ?`,
+        [bookingId, requesterUserId]
       );
 
       await connection.commit();
@@ -219,9 +217,7 @@ export async function PATCH(
         success: true,
         message:
           refundedAmount > 0
-            ? 'Booking cancelled and payment refunded to renter wallet'
-            : pendingPaymentNeedsAdminReview
-              ? 'Booking cancelled. Payment is pending admin review; refund will happen only if admin approves.'
+            ? 'Booking cancelled and payment refunded to your wallet'
             : 'Booking cancelled',
         booking: {
           id: bookingId,
@@ -239,7 +235,7 @@ export async function PATCH(
       connection.release();
     }
   } catch (error) {
-    console.error('Unable to cancel owner booking:', error);
+    console.error('Unable to cancel user booking:', error);
     return NextResponse.json(
       { error: 'Unable to cancel booking right now' },
       { status: 500 }

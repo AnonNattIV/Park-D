@@ -82,17 +82,33 @@ type UserApiResponse = {
   error?: string;
 };
 
+const BANGKOK_TIMEZONE = 'Asia/Bangkok';
+
+function parseDateValue(dateValue: string | null): Date | null {
+  if (!dateValue) {
+    return null;
+  }
+
+  const parsed = new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed;
+}
+
 function formatScheduledDate(
   checkinTime: string | null,
   bookingTimeFallback: string
 ): string {
   const source = checkinTime || bookingTimeFallback;
-  const parsed = new Date(source);
-  if (Number.isNaN(parsed.getTime())) {
+  const parsed = parseDateValue(source);
+  if (!parsed) {
     return '-';
   }
 
   return parsed.toLocaleDateString('th-TH', {
+    timeZone: BANGKOK_TIMEZONE,
     weekday: 'short',
     day: '2-digit',
     month: '2-digit',
@@ -101,19 +117,84 @@ function formatScheduledDate(
 }
 
 function formatTime(dateValue: string | null): string {
-  if (!dateValue) {
-    return '-';
-  }
-
-  const parsed = new Date(dateValue);
-  if (Number.isNaN(parsed.getTime())) {
+  const parsed = parseDateValue(dateValue);
+  if (!parsed) {
     return '-';
   }
 
   return parsed.toLocaleTimeString('th-TH', {
+    timeZone: BANGKOK_TIMEZONE,
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function formatWalletTransactionTime(dateValue: string): string {
+  const parsed = parseDateValue(dateValue);
+  if (!parsed) {
+    return '-';
+  }
+
+  return parsed.toLocaleString('th-TH', {
+    timeZone: BANGKOK_TIMEZONE,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function normalizeWalletNote(note: string | null): string {
+  if (!note) {
+    return '-';
+  }
+
+  const cleaned = note
+    .replace(/\((OWNER_APPROVED|AUTO_APPROVED_7H|AUTO_CHECKOUT_NO_CHECKIN)\)/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return cleaned || '-';
+}
+
+function describeWalletTransaction(tx: WalletTransaction): string {
+  const normalizedType = tx.type.toUpperCase();
+  const normalizedNote = (tx.note || '').toLowerCase();
+
+  if (normalizedType === 'TOPUP') {
+    if (
+      normalizedNote.includes('income from parking lot') ||
+      normalizedNote.includes('owner payout') ||
+      normalizedNote.includes('parking lot')
+    ) {
+      return 'Income from parking lot';
+    }
+
+    return 'Wallet top-up';
+  }
+
+  if (normalizedType === 'REFUND') {
+    if (
+      normalizedNote.includes('deposit returned') ||
+      normalizedNote.includes('checkout settlement renter refund') ||
+      normalizedNote.includes('checkout')
+    ) {
+      return 'Deposit returned';
+    }
+
+    if (normalizedNote.includes('cancelled booking') || normalizedNote.includes('cancelled')) {
+      return 'Refund from cancelled booking';
+    }
+
+    return 'Wallet refund';
+  }
+
+  if (normalizedType === 'DEBIT') {
+    return 'Penalty charged from wallet balance';
+  }
+
+  return normalizeWalletNote(tx.note);
 }
 
 function formatDuration(durationMinutes: number | null): string {
@@ -125,14 +206,32 @@ function formatDuration(durationMinutes: number | null): string {
   const minutes = durationMinutes % 60;
 
   if (hours > 0 && minutes > 0) {
-    return `${hours} ชั่วโมง ${minutes} นาที`;
+    return `${hours} hr ${minutes} min`;
   }
 
   if (hours > 0) {
-    return `${hours} ชั่วโมง`;
+    return `${hours} hr`;
   }
 
-  return `${minutes} นาที`;
+  return `${minutes} min`;
+}
+
+function mapBookingStatusLabel(
+  bookingStatus: string | undefined,
+  paymentStatus: string | null | undefined
+): string {
+  const normalizedBookingStatus = (bookingStatus || '-').toUpperCase();
+  const normalizedPaymentStatus = (paymentStatus || '').toUpperCase();
+
+  if (normalizedBookingStatus === 'WAITING_FOR_PAYMENT' && normalizedPaymentStatus === 'PENDING') {
+    return 'UNDER PROGRESS OF CHECKING';
+  }
+
+  if (normalizedBookingStatus === 'PAYMENT_CONFIRMED' && normalizedPaymentStatus === 'PAID') {
+    return 'CHECKOUT';
+  }
+
+  return normalizedBookingStatus;
 }
 
 function mapBookingToCard(booking: ApiBookingHistory): BookingHistory {
@@ -150,7 +249,7 @@ function mapBookingToCard(booking: ApiBookingHistory): BookingHistory {
         : booking.totalPrice,
     paymentStatus: booking.paymentStatus,
     paymentMethod: booking.paymentMethod,
-    bookingStatus: booking.bookingStatus,
+    bookingStatus: mapBookingStatusLabel(booking.bookingStatus, booking.paymentStatus),
   };
 }
 
@@ -178,6 +277,9 @@ export default function ProfilePage() {
   });
   const [bookings, setBookings] = useState<BookingHistory[]>([]);
   const [wallet, setWallet] = useState<WalletSummary | null>(null);
+  const [expandedWalletTransactionId, setExpandedWalletTransactionId] = useState<number | null>(
+    null
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -277,7 +379,7 @@ export default function ProfilePage() {
         }
 
         console.error('Profile load error:', error);
-        setLoadError('ไม่สามารถโหลดข้อมูลโปรไฟล์ได้ในตอนนี้');
+        setLoadError('à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¹‚à¸«à¸¥à¸”à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹„à¸”à¹‰à¹ƒà¸™à¸•à¸­à¸™à¸™à¸µà¹‰');
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -291,6 +393,10 @@ export default function ProfilePage() {
       isMounted = false;
     };
   }, [authUserId, authUsername, router, token]);
+
+  useEffect(() => {
+    setExpandedWalletTransactionId(null);
+  }, [wallet?.id]);
 
   const handleInputChange = (field: keyof ProfileForm, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -335,7 +441,7 @@ export default function ProfilePage() {
       }
 
       setFormData((prev) => ({ ...prev, avatar: result.imageUrl || null }));
-      setSuccessMessage('อัปโหลดรูปโปรไฟล์เรียบร้อยแล้ว');
+      setSuccessMessage('à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¸£à¸¹à¸›à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§');
 
       const nextStoredUser: AuthUser = {
         ...authUser,
@@ -345,7 +451,7 @@ export default function ProfilePage() {
       updateStoredAuthUser(nextStoredUser);
     } catch (error) {
       console.error('Avatar upload error:', error);
-      setFormError('ไม่สามารถอัปโหลดรูปโปรไฟล์ได้');
+      setFormError('à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¸£à¸¹à¸›à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹„à¸”à¹‰');
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
@@ -381,7 +487,7 @@ export default function ProfilePage() {
       }
 
       setFormData((prev) => ({ ...prev, avatar: null }));
-      setSuccessMessage('ลบรูปโปรไฟล์เรียบร้อยแล้ว');
+      setSuccessMessage('à¸¥à¸šà¸£à¸¹à¸›à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§');
 
       const nextStoredUser: AuthUser = {
         ...authUser,
@@ -391,7 +497,7 @@ export default function ProfilePage() {
       updateStoredAuthUser(nextStoredUser);
     } catch (error) {
       console.error('Avatar delete error:', error);
-      setFormError('ไม่สามารถลบรูปโปรไฟล์ได้');
+      setFormError('à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸¥à¸šà¸£à¸¹à¸›à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹„à¸”à¹‰');
     } finally {
       setIsDeletingImage(false);
       if (fileInputRef.current) {
@@ -496,11 +602,11 @@ export default function ProfilePage() {
 
       setAuthUser(nextStoredUser);
       updateStoredAuthUser(nextStoredUser);
-      setSuccessMessage('บันทึกข้อมูลโปรไฟล์เรียบร้อยแล้ว');
+      setSuccessMessage('à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§');
     } catch (error) {
       console.error('Profile save error:', error);
       setFormError(
-        error instanceof Error ? error.message : 'ไม่สามารถบันทึกข้อมูลโปรไฟล์ได้'
+        error instanceof Error ? error.message : 'à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹„à¸”à¹‰'
       );
     } finally {
       setIsSaving(false);
@@ -719,21 +825,54 @@ export default function ProfilePage() {
             {wallet?.transactions?.length ? (
               <div className="mt-4 space-y-2">
                 {wallet.transactions.slice(0, 5).map((tx) => (
-                  <div
-                    key={tx.id}
-                    className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm"
-                  >
-                    <div>
-                      <p className="font-medium text-gray-700">{tx.type}</p>
-                      <p className="text-xs text-gray-500">{tx.note || '-'}</p>
-                    </div>
-                    <p className="font-semibold text-emerald-600">
-                      +{tx.amount.toLocaleString('th-TH', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}{' '}
-                      THB
-                    </p>
+                  <div key={tx.id} className="rounded-lg bg-gray-50 px-3 py-2 text-sm">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedWalletTransactionId((previousId) =>
+                          previousId === tx.id ? null : tx.id
+                        );
+                      }}
+                      className="flex w-full items-center justify-between text-left"
+                    >
+                      <div>
+                        <p className="font-medium text-gray-700">{describeWalletTransaction(tx)}</p>
+                        <p className="text-xs text-gray-500">
+                          {formatWalletTransactionTime(tx.createdAt)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p
+                          className={`font-semibold ${
+                            tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                          }`}
+                        >
+                          {tx.amount >= 0 ? '+' : '-'}
+                          {Math.abs(tx.amount).toLocaleString('th-TH', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          THB
+                        </p>
+                        <p className="text-[11px] text-[#5B7CFF]">
+                          {expandedWalletTransactionId === tx.id ? 'Hide details' : 'View details'}
+                        </p>
+                      </div>
+                    </button>
+                    {expandedWalletTransactionId === tx.id ? (
+                      <div className="mt-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
+                        <p>Note: {normalizeWalletNote(tx.note)}</p>
+                        <p className="mt-1">
+                          Balance: {tx.balanceBefore.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
+                          THB to{' '}
+                          {tx.balanceAfter.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
+                          THB
+                        </p>
+                        <p className="mt-1">
+                          Ref: booking #{tx.bookingId ?? '-'}, payment #{tx.paymentId ?? '-'}
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -741,7 +880,7 @@ export default function ProfilePage() {
               <p className="mt-3 text-sm text-gray-500">No wallet transactions yet.</p>
             )}
           </div>
-          <h2 className="mb-6 text-xl font-bold text-gray-800">ประวัติการจอง</h2>
+          <h2 className="mb-6 text-xl font-bold text-gray-800">Booking History</h2>
           <div className="space-y-4">
             {bookings.length > 0 ? (
               bookings.map((booking) => (
@@ -751,7 +890,7 @@ export default function ProfilePage() {
               ))
             ) : (
               <div className="flex items-center justify-center py-12">
-                <p className="text-lg text-gray-500">ยังไม่มีประวัติการจอง</p>
+                <p className="text-lg text-gray-500">No booking history yet.</p>
               </div>
             )}
           </div>

@@ -7,12 +7,18 @@ interface ParkingImageUploaderProps {
   images: File[];
   onImagesChange: (images: File[]) => void;
   maxImages?: number;
+  required?: boolean;
+  errorMessage?: string;
+  helperText?: string;
 }
 
 export default function ParkingImageUploader({
   images,
   onImagesChange,
   maxImages = 5,
+  required = false,
+  errorMessage,
+  helperText = 'First uploaded image is used as cover on parking detail page.',
 }: ParkingImageUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -35,7 +41,9 @@ export default function ParkingImageUploader({
 
   return (
     <div>
-      <label className="mb-3 block text-sm font-medium text-gray-700">รูปภาพ</label>
+      <label className="mb-3 block text-sm font-medium text-gray-700">
+        Images {required ? <span className="text-red-500">*</span> : null}
+      </label>
 
       <div
         onClick={handleUploadClick}
@@ -52,7 +60,7 @@ export default function ParkingImageUploader({
           className="hidden"
         />
         <PlusIcon className="mb-2 h-8 w-8 text-gray-400" />
-        <span className="text-sm text-gray-500">เพิ่มรูปภาพ</span>
+        <span className="text-sm text-gray-500">Add images</span>
       </div>
 
       {images.length > 0 ? (
@@ -78,10 +86,11 @@ export default function ParkingImageUploader({
         </div>
       ) : null}
 
+      <p className="mt-2 text-xs text-gray-500">{helperText}</p>
       <p className="mt-2 text-xs text-gray-400">
-        {images.length} / {maxImages} รูป
+        {images.length} / {maxImages} images
       </p>
+      {errorMessage ? <p className="mt-1 text-xs text-red-500">{errorMessage}</p> : null}
     </div>
   );
 }
-

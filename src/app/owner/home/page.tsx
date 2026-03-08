@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PlusIcon } from '@heroicons/react/24/outline';
 import Tabbar from '@/components/Tabbar';
@@ -58,6 +58,7 @@ type OwnerBookingDetail = {
   checkinProofUrl: string | null;
   checkoutTime: string | null;
   bookingStatus: string;
+  canReviewCheckout?: boolean;
   payment: {
     id: number;
     status: string | null;
@@ -65,7 +66,18 @@ type OwnerBookingDetail = {
     method: string | null;
     proofUrl?: string | null;
   } | null;
+  settlement: {
+    reason: string;
+    rentAmount: number;
+    ownerShare: number;
+    platformShare: number;
+    renterRefund: number;
+    ownerBonus: number;
+    settledAt: string | null;
+  } | null;
 };
+
+const BANGKOK_TIMEZONE = 'Asia/Bangkok';
 
 function mapParkingStatus(statusLabel: string): ParkingStatus {
   const normalizedStatus = statusLabel.toLowerCase();
@@ -92,11 +104,19 @@ function formatDateTimeValue(value: string | null): string {
   }
 
   return parsed.toLocaleString('th-TH', {
+    timeZone: BANGKOK_TIMEZONE,
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+  });
+}
+
+function formatMoney(value: number): string {
+  return value.toLocaleString('th-TH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 }
 
@@ -121,6 +141,9 @@ export default function OwnerPage() {
   const [processingCheckoutReviewAction, setProcessingCheckoutReviewAction] = useState<
     'APPROVE' | 'DENY' | null
   >(null);
+  const [expandedSettlementBookingId, setExpandedSettlementBookingId] = useState<number | null>(
+    null
+  );
 
   const normalizedRole = authUser?.role?.toLowerCase() || '';
   const canManageOwnerView = normalizedRole === 'owner' || normalizedRole === 'admin';
@@ -134,6 +157,8 @@ export default function OwnerPage() {
   const ownerRequestStatusBadgeClass =
     ownerRequestStatus === 'APPROVED'
       ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+      : ownerRequestStatus === 'PENDING'
+        ? 'border border-blue-200 bg-blue-50 text-blue-700'
       : ownerRequestStatus === null
         ? 'border border-blue-200 bg-blue-50 text-[#5B7CFF]'
         : 'border border-red-200 bg-red-50 text-red-700';
@@ -142,6 +167,23 @@ export default function OwnerPage() {
   const requestingLots = parkingLots.filter((lot) => lot.status.toLowerCase().includes('pending'));
   const actualIncome = Number(
     parkingLots.reduce((sum, lot) => sum + Number(lot.ownerIncome || 0), 0).toFixed(2)
+  );
+  const incomeHistory = useMemo(
+    () =>
+      ownerBookings
+        .filter((booking) => booking.settlement)
+        .sort((left, right) => {
+          const leftTime = new Date(
+            left.settlement?.settledAt || left.checkoutTime || left.bookingTime
+          ).getTime();
+          const rightTime = new Date(
+            right.settlement?.settledAt || right.checkoutTime || right.bookingTime
+          ).getTime();
+          const safeLeft = Number.isNaN(leftTime) ? 0 : leftTime;
+          const safeRight = Number.isNaN(rightTime) ? 0 : rightTime;
+          return safeRight - safeLeft;
+        }),
+    [ownerBookings]
   );
 
   useEffect(() => {
@@ -601,7 +643,7 @@ export default function OwnerPage() {
               ) : null}
 
               {ownerRequestStatus === 'PENDING' ? (
-                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
                   Your owner request is pending review.
                 </div>
               ) : null}
@@ -679,7 +721,7 @@ export default function OwnerPage() {
           <OwnerStatCard title="Parking Lots" value={parkingLots.length} />
           <OwnerStatCard title="Total Slots" value={totalSlots} />
           <OwnerStatCard title="Pending Lots" value={pendingLots} />
-          <OwnerStatCard title="Actual Income" value={actualIncome} unit="THB" />
+          <OwnerStatCard title="Income" value={actualIncome} unit="THB" />
         </div>
 
         <section className="mb-8">
@@ -752,6 +794,64 @@ export default function OwnerPage() {
 
         <section className="mb-8">
           <div className="mb-4">
+            <h2 className="text-2xl font-bold text-gray-800">Income History</h2>
+            <p className="text-sm text-gray-500">
+              Real settlement history from completed checkout records.
+            </p>
+          </div>
+          {incomeHistory.length === 0 ? (
+            <div className="rounded-2xl bg-white px-5 py-8 text-center text-gray-500 shadow-sm">
+              No income history yet.
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-100 text-left text-sm font-semibold text-slate-700">
+                    <tr>
+                      <th className="px-4 py-3">Settled At</th>
+                      <th className="px-4 py-3">Booking</th>
+                      <th className="px-4 py-3">Lot</th>
+                      <th className="px-4 py-3">Rent</th>
+                      <th className="px-4 py-3">Penalty/Deposit</th>
+                      <th className="px-4 py-3">Owner Credit</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white text-sm text-slate-600">
+                    {incomeHistory.map((booking) => {
+                      const settlement = booking.settlement;
+                      if (!settlement) {
+                        return null;
+                      }
+
+                      const ownerCredit = settlement.ownerShare + settlement.ownerBonus;
+
+                      return (
+                        <tr key={`income-${booking.id}`} className="hover:bg-slate-50">
+                          <td className="px-4 py-4">
+                            {formatDateTimeValue(
+                              settlement.settledAt || booking.checkoutTime || booking.bookingTime
+                            )}
+                          </td>
+                          <td className="px-4 py-4 font-semibold text-slate-800">#{booking.id}</td>
+                          <td className="px-4 py-4">{booking.lotName}</td>
+                          <td className="px-4 py-4">{formatMoney(settlement.rentAmount)} THB</td>
+                          <td className="px-4 py-4">{formatMoney(settlement.ownerBonus)} THB</td>
+                          <td className="px-4 py-4 font-semibold text-emerald-700">
+                            {formatMoney(ownerCredit)} THB
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="mb-8">
+          <div className="mb-4">
             <h2 className="text-2xl font-bold text-gray-800">Booked Slot Details</h2>
             <p className="text-sm text-gray-500">
               Review renter bookings and cancel with automatic refund to wallet.
@@ -805,11 +905,11 @@ export default function OwnerPage() {
                       </tr>
                     ) : (
                       ownerBookings.map((booking) => {
+                        const bookingStatus = booking.bookingStatus.toUpperCase();
                         const canCancel =
-                          booking.bookingStatus !== 'CANCELLED' &&
-                          booking.bookingStatus !== 'CHECKOUT_APPROVED' &&
-                          booking.bookingStatus !== 'CHECKING_OUT';
-                        const canReviewCheckout = booking.bookingStatus === 'CHECKING_OUT';
+                          bookingStatus === 'WAITING_FOR_PAYMENT' ||
+                          bookingStatus === 'PAYMENT_CONFIRMED';
+                        const canReviewCheckout = booking.canReviewCheckout === true;
                         const isProcessingCheckoutReview =
                           processingCheckoutReviewId === booking.id;
 
@@ -847,6 +947,50 @@ export default function OwnerPage() {
                                   </a>
                                 ) : null}
 
+                                {booking.settlement ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setExpandedSettlementBookingId((previousId) =>
+                                          previousId === booking.id ? null : booking.id
+                                        );
+                                      }}
+                                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"
+                                    >
+                                      {expandedSettlementBookingId === booking.id
+                                        ? 'Hide Owner Receipt'
+                                        : 'View Owner Receipt'}
+                                    </button>
+                                    {expandedSettlementBookingId === booking.id ? (
+                                      <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-900">
+                                        <div className="font-semibold">Owner Receipt</div>
+                                        <div>Rent: {formatMoney(booking.settlement.rentAmount)} THB</div>
+                                        <div>
+                                          Owner share (80%):{' '}
+                                          {formatMoney(booking.settlement.ownerShare)} THB
+                                        </div>
+                                        <div>
+                                          Penalty/Deposit impact:{' '}
+                                          {formatMoney(booking.settlement.ownerBonus)} THB
+                                        </div>
+                                        <div>
+                                          Platform fee (20%):{' '}
+                                          {formatMoney(booking.settlement.platformShare)} THB
+                                        </div>
+                                        <div className="font-semibold">
+                                          Total owner credit:{' '}
+                                          {formatMoney(
+                                            booking.settlement.ownerShare +
+                                              booking.settlement.ownerBonus
+                                          )}{' '}
+                                          THB
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </>
+                                ) : null}
+
                                 {canReviewCheckout ? (
                                   <>
                                     <button
@@ -868,7 +1012,7 @@ export default function OwnerPage() {
                                         void handleCheckoutReviewByOwner(booking.id, 'DENY');
                                       }}
                                       disabled={isProcessingCheckoutReview}
-                                      className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                      className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                                     >
                                       {isProcessingCheckoutReview &&
                                       processingCheckoutReviewAction === 'DENY'
@@ -878,22 +1022,23 @@ export default function OwnerPage() {
                                   </>
                                 ) : null}
 
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    void handleCancelBookingByOwner(booking.id);
-                                  }}
-                                  disabled={
-                                    !canCancel ||
-                                    processingCancelBookingId === booking.id ||
-                                    isProcessingCheckoutReview
-                                  }
-                                  className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                                >
-                                  {processingCancelBookingId === booking.id
-                                    ? 'Cancelling...'
-                                    : 'Cancel'}
-                                </button>
+                                {canCancel ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void handleCancelBookingByOwner(booking.id);
+                                    }}
+                                    disabled={
+                                      processingCancelBookingId === booking.id ||
+                                      isProcessingCheckoutReview
+                                    }
+                                    className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                  >
+                                    {processingCancelBookingId === booking.id
+                                      ? 'Cancelling...'
+                                      : 'Cancel'}
+                                  </button>
+                                ) : null}
                               </div>
                             </td>
                           </tr>

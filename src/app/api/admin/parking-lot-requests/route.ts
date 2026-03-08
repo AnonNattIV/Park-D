@@ -24,6 +24,11 @@ interface ParkingLotRequestRow extends RowDataPacket {
   owner_name: string;
 }
 
+interface MetadataEvidenceRow extends RowDataPacket {
+  lot_id: number;
+  owner_evidence_url: string | null;
+}
+
 function readBearerToken(request: NextRequest): string | null {
   const authorization = request.headers.get('authorization') || '';
 
@@ -100,6 +105,43 @@ export async function GET(request: NextRequest) {
         pl.lot_id DESC`
     );
 
+    let evidenceByLotId: Record<number, string | null> = {};
+    if (rows.length > 0) {
+      const [tableRows] = await getPool().query<RowDataPacket[]>(
+        `SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'parking_lot_metadata'
+        LIMIT 1`
+      );
+
+      if (tableRows.length > 0) {
+        const [columnRows] = await getPool().query<RowDataPacket[]>(
+          `SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'parking_lot_metadata'
+            AND column_name = 'owner_evidence_url'
+          LIMIT 1`
+        );
+
+        if (columnRows.length > 0) {
+          const lotIds = rows.map((row) => Number(row.lot_id));
+          const [evidenceRows] = await getPool().query<MetadataEvidenceRow[]>(
+            `SELECT lot_id, owner_evidence_url
+            FROM parking_lot_metadata
+            WHERE lot_id IN (${lotIds.map(() => '?').join(', ')})`,
+            lotIds
+          );
+
+          evidenceByLotId = evidenceRows.reduce<Record<number, string | null>>((acc, row) => {
+            acc[Number(row.lot_id)] = row.owner_evidence_url || null;
+            return acc;
+          }, {});
+        }
+      }
+    }
+
     const requests = rows.map((row) => {
       const requestStatus = mapRequestStatus(Number(row.is_approve), row.p_status);
       const lotName = row.lot_name?.trim() || row.location;
@@ -113,6 +155,7 @@ export async function GET(request: NextRequest) {
         ownerUserId: row.owner_user_id,
         ownerUsername: row.owner_username,
         ownerName: row.owner_name,
+        ownerEvidenceUrl: evidenceByLotId[Number(row.lot_id)] || null,
         submittedAt: toIsoDateString(row.submitted_at),
         status: requestStatus,
       };

@@ -23,6 +23,7 @@ interface OwnerCheckoutReviewRow extends RowDataPacket {
   checkin_proof: string | null;
   checkout_datetime: Date | string | null;
   late_minutes: number | string;
+  is_checkout_review_window: number | string;
 }
 
 function readRequester(request: NextRequest): { userId: number; role: string } | null {
@@ -117,10 +118,15 @@ export async function PATCH(
             TIMESTAMPDIFF(
               MINUTE,
               b.checkout_datetime,
-              CONVERT_TZ(b.updated_at, '+00:00', '+07:00')
+              b.updated_at
             ),
             0
-          ) AS late_minutes
+          ) AS late_minutes,
+          CASE
+            WHEN b.checkout_datetime IS NOT NULL
+             AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') >= b.checkout_datetime
+            THEN 1 ELSE 0
+          END AS is_checkout_review_window
         FROM bookings b
         INNER JOIN parking_lots pl ON pl.lot_id = b.lot_id
         WHERE b.b_id = ?
@@ -151,6 +157,13 @@ export async function PATCH(
             { status: 409 }
           );
         }
+        if (Number(booking.is_checkout_review_window) !== 1) {
+          await connection.rollback();
+          return NextResponse.json(
+            { error: 'Checkout review is available after booking end time' },
+            { status: 409 }
+          );
+        }
 
         const settlement = await finalizeCheckoutWithSettlement(
           connection,
@@ -166,7 +179,7 @@ export async function PATCH(
         return NextResponse.json({
           success: true,
           message: settlement.didSettle
-            ? 'Checkout proof denied and renter forfeits 50% payment'
+            ? 'Checkout proof denied and renter forfeits full deposit'
             : 'Checkout already finalized',
           booking: {
             id: bookingId,
@@ -179,6 +192,13 @@ export async function PATCH(
         await connection.rollback();
         return NextResponse.json(
           { error: 'This booking is not waiting for checkout approval' },
+          { status: 409 }
+        );
+      }
+      if (Number(booking.is_checkout_review_window) !== 1) {
+        await connection.rollback();
+        return NextResponse.json(
+          { error: 'Checkout review is available after booking end time' },
           { status: 409 }
         );
       }

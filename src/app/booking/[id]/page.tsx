@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Tabbar from '@/components/Tabbar';
@@ -43,22 +43,6 @@ type BookingCreateResponse = {
   };
 };
 
-type PaymentCreateResponse = {
-  success?: boolean;
-  message?: string;
-  error?: string;
-  payment?: {
-    id: number;
-    bookingId: number;
-    status: string;
-    method: string;
-    amount: number;
-    rentAmount?: number;
-    ownerIncome?: number;
-    proofUrl: string;
-  };
-};
-
 type DurationUnit = 'HOUR' | 'DAY' | 'MONTH';
 
 function formatPrice(value: number): string {
@@ -91,11 +75,8 @@ export default function BookingPage() {
   const [checkinDatetime, setCheckinDatetime] = useState('');
   const [checkoutDatetime, setCheckoutDatetime] = useState('');
   const [durationUnit, setDurationUnit] = useState<DurationUnit>('HOUR');
-  const [durationAmount, setDurationAmount] = useState(2);
+  const [durationAmount, setDurationAmount] = useState(1);
   const [minimumDateTime, setMinimumDateTime] = useState('');
-  const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
-  const [paymentProofName, setPaymentProofName] = useState('');
-  const [createdBookingId, setCreatedBookingId] = useState<number | null>(null);
 
   const [submitError, setSubmitError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -113,10 +94,8 @@ export default function BookingPage() {
     setIsReady(true);
 
     const now = new Date();
-    const defaultCheckinEpoch = now.getTime();
-
     setMinimumDateTime(formatBangkokDateTimeLocalInput(now));
-    setCheckinDatetime(formatBangkokDateTimeLocalInput(defaultCheckinEpoch));
+    setCheckinDatetime(formatBangkokDateTimeLocalInput(now));
   }, [router]);
 
   useEffect(() => {
@@ -184,25 +163,6 @@ export default function BookingPage() {
     setCheckoutDatetime(formatBangkokDateTimeLocalInput(computedCheckoutEpoch));
   }, [checkinDatetime, durationAmount, durationUnit]);
 
-  useEffect(() => {
-    if (createdBookingId === null) {
-      return;
-    }
-
-    setCreatedBookingId(null);
-    // Reset retry booking id when booking inputs are changed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    plateId,
-    vehicleBrand,
-    vehicleModel,
-    checkinDatetime,
-    checkoutDatetime,
-    durationAmount,
-    durationUnit,
-    lotIdParam,
-  ]);
-
   const durationMinutes = useMemo(() => {
     if (!checkinDatetime || !checkoutDatetime) {
       return 0;
@@ -226,54 +186,18 @@ export default function BookingPage() {
     return Number(((durationMinutes / 60) * lot.price).toFixed(2));
   }, [lot, durationMinutes]);
 
-  const estimatedTotal = useMemo(() => Number((estimatedRent * 1.5).toFixed(2)), [estimatedRent]);
+  const estimatedDeposit = useMemo(
+    () => Number((estimatedRent * 0.5).toFixed(2)),
+    [estimatedRent]
+  );
+
+  const estimatedTotal = useMemo(
+    () => Number((estimatedRent * 1.5).toFixed(2)),
+    [estimatedRent]
+  );
+
   const isTimeInvalid = durationMinutes <= 0;
   const isFormInvalid = isTimeInvalid;
-
-  const handlePaymentProofChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] || null;
-    setPaymentProofFile(file);
-    setPaymentProofName(file?.name || '');
-  };
-
-  const submitPaymentForBooking = async (bookingId: number) => {
-    if (!token) {
-      return;
-    }
-
-    if (!paymentProofFile) {
-      throw new Error('กรุณาอัปโหลดหลักฐานการชำระเงิน');
-    }
-
-    const formData = new FormData();
-    formData.append('bookingId', String(bookingId));
-    formData.append('payMethod', 'QR_TRANSFER');
-    formData.append('proof', paymentProofFile);
-
-    const response = await fetch('/api/payments', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData,
-    });
-
-    const result = (await response.json()) as PaymentCreateResponse;
-
-    if (response.status === 401) {
-      clearStoredAuth();
-      router.replace('/login');
-      return;
-    }
-
-    if (!response.ok) {
-      throw new Error(result.error || 'ไม่สามารถยืนยันการชำระเงินได้ในขณะนี้');
-    }
-
-    setCreatedBookingId(null);
-    alert(result.message || 'ส่งหลักฐานการชำระเงินเรียบร้อยแล้ว');
-    router.push('/aboutme');
-  };
 
   const handleSubmit = async () => {
     if (!token || !lot || !lotIdParam) {
@@ -285,17 +209,12 @@ export default function BookingPage() {
     const normalizedModel = vehicleModel.trim();
 
     if (!normalizedPlateId) {
-      setSubmitError('กรุณากรอกทะเบียนรถ');
-      return;
-    }
-
-    if (!paymentProofFile) {
-      setSubmitError('กรุณาอัปโหลดหลักฐานการชำระเงิน');
+      setSubmitError('Please enter plate number');
       return;
     }
 
     if (!checkinDatetime || !checkoutDatetime) {
-      setSubmitError('กรุณาระบุเวลาเข้าและเวลาออก');
+      setSubmitError('Please set check-in and check-out time');
       return;
     }
 
@@ -308,12 +227,12 @@ export default function BookingPage() {
     const checkout = parseBangkokDateTimeInput(checkoutDatetime);
 
     if (!checkin || !checkout) {
-      setSubmitError('รูปแบบวันเวลาไม่ถูกต้อง');
+      setSubmitError('Invalid date-time format');
       return;
     }
 
     if (checkout.comparableTime <= checkin.comparableTime) {
-      setSubmitError('เวลาออกต้องมากกว่าเวลาเข้า');
+      setSubmitError('Check-out must be later than check-in');
       return;
     }
 
@@ -321,45 +240,38 @@ export default function BookingPage() {
     setIsSubmitting(true);
 
     try {
-      let bookingId = createdBookingId;
+      const response = await fetch('/api/bookings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          lotId: Number(lotIdParam),
+          plateId: normalizedPlateId,
+          vehicleBrand: normalizedBrand,
+          vehicleModel: normalizedModel,
+          checkinDatetime,
+          checkoutDatetime,
+        }),
+      });
 
-      if (!bookingId) {
-        const response = await fetch('/api/bookings', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            lotId: Number(lotIdParam),
-            plateId: normalizedPlateId,
-            vehicleBrand: normalizedBrand,
-            vehicleModel: normalizedModel,
-            checkinDatetime,
-            checkoutDatetime,
-          }),
-        });
+      const result = (await response.json()) as BookingCreateResponse;
 
-        const result = (await response.json()) as BookingCreateResponse;
-
-        if (response.status === 401) {
-          clearStoredAuth();
-          router.replace('/login');
-          return;
-        }
-
-        if (!response.ok || !result.booking?.id) {
-          throw new Error(result.error || 'ไม่สามารถสร้างการจองได้ในขณะนี้');
-        }
-
-        bookingId = result.booking.id;
-        setCreatedBookingId(bookingId);
+      if (response.status === 401) {
+        clearStoredAuth();
+        router.replace('/login');
+        return;
       }
 
-      await submitPaymentForBooking(bookingId);
+      if (!response.ok || !result.booking?.id) {
+        throw new Error(result.error || 'Unable to create booking right now');
+      }
+
+      router.push(`/booking-history/${result.booking.id}`);
     } catch (error) {
       setSubmitError(
-        error instanceof Error ? error.message : 'ไม่สามารถยืนยันการชำระเงินได้ในขณะนี้'
+        error instanceof Error ? error.message : 'Unable to create booking right now'
       );
     } finally {
       setIsSubmitting(false);
@@ -370,7 +282,7 @@ export default function BookingPage() {
     return (
       <div className="min-h-screen bg-white pb-28">
         <Tabbar />
-        <div className="mx-auto max-w-5xl p-6 text-center text-gray-500">กำลังโหลด...</div>
+        <div className="mx-auto max-w-5xl p-6 text-center text-gray-500">Loading...</div>
       </div>
     );
   }
@@ -380,7 +292,7 @@ export default function BookingPage() {
       <div className="min-h-screen bg-white pb-28">
         <Tabbar />
         <div className="mx-auto max-w-5xl p-6 text-center text-red-600">
-          {lotError || 'ไม่พบข้อมูลที่จอดรถ'}
+          {lotError || 'Parking lot not found'}
         </div>
       </div>
     );
@@ -415,11 +327,11 @@ export default function BookingPage() {
                       ? `${lot.latitude.toFixed(6)}, ${lot.longitude.toFixed(6)}`
                       : 'No coordinates available'}
                   </li>
-                  <li>ราคา: {formatPrice(lot.price)} บาท/ชม.</li>
+                  <li>Price: {formatPrice(lot.price)} THB/hr</li>
                   <li>
-                    ที่ว่าง: {lot.availableSlot} / {lot.totalSlot}
+                    Available: {lot.availableSlot} / {lot.totalSlot}
                   </li>
-                  <li>เวลาจอง: {durationMinutes > 0 ? `${durationMinutes} นาที` : '-'}</li>
+                  <li>Duration: {durationMinutes > 0 ? `${durationMinutes} min` : '-'}</li>
                 </ul>
               </div>
             </section>
@@ -428,17 +340,17 @@ export default function BookingPage() {
               <h2 className="mb-4 text-2xl font-bold text-gray-900">Vehicle Information</h2>
               <div className="space-y-4">
                 <div>
-                  <label className="mb-2 block font-medium text-gray-900">ทะเบียนรถ *</label>
+                  <label className="mb-2 block font-medium text-gray-900">Plate Number *</label>
                   <input
                     type="text"
                     value={plateId}
                     onChange={(e) => setPlateId(e.target.value)}
                     className="w-full rounded-2xl bg-[#F3F4F6] px-5 py-4 text-gray-900 transition-all focus:outline-none focus:ring-2 focus:ring-[#5B7CFF]"
-                    placeholder="กข 1234"
+                    placeholder="AA 1234"
                   />
                 </div>
                 <div>
-                  <label className="mb-2 block font-medium text-gray-900">ยี่ห้อ (ไม่บังคับ)</label>
+                  <label className="mb-2 block font-medium text-gray-900">Brand (optional)</label>
                   <input
                     type="text"
                     value={vehicleBrand}
@@ -448,7 +360,7 @@ export default function BookingPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-2 block font-medium text-gray-900">รุ่น (ไม่บังคับ)</label>
+                  <label className="mb-2 block font-medium text-gray-900">Model (optional)</label>
                   <input
                     type="text"
                     value={vehicleModel}
@@ -483,7 +395,9 @@ export default function BookingPage() {
                       value={durationAmount}
                       onChange={(event) => {
                         const nextValue = Number(event.target.value);
-                        setDurationAmount(Number.isFinite(nextValue) ? Math.max(1, Math.floor(nextValue)) : 1);
+                        setDurationAmount(
+                          Number.isFinite(nextValue) ? Math.max(1, Math.floor(nextValue)) : 1
+                        );
                       }}
                       className="w-full rounded-2xl bg-[#F3F4F6] px-5 py-4 text-gray-900 transition-all focus:outline-none focus:ring-2 focus:ring-[#5B7CFF]"
                     />
@@ -516,40 +430,20 @@ export default function BookingPage() {
 
           <div>
             <section>
-              <h2 className="mb-4 text-2xl font-bold text-gray-900">Payment Method</h2>
+              <h2 className="mb-4 text-2xl font-bold text-gray-900">Payment Step</h2>
               <div className="rounded-3xl bg-[#F3F4F6] p-8">
-                <div className="flex items-center gap-6">
-                  <div className="h-28 w-28 flex-shrink-0 rounded-xl bg-[#D1D5DB]"></div>
-                  <div className="text-xl font-bold leading-tight text-gray-900">
-                    Scan QR Code
-                    <br />
-                    to pay
-                  </div>
-                </div>
-                <p className="mt-4 text-sm text-gray-500">
-                  Confirm to create booking and submit real payment record.
+                <p className="text-sm text-gray-600">
+                  After confirming this booking, you will go to booking history detail page to upload payment proof.
                 </p>
-                <div className="mt-4">
-                  <label className="mb-2 block text-sm font-semibold text-gray-700">
-                    หลักฐานการชำระเงิน *
-                  </label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handlePaymentProofChange}
-                    className="block w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-[#5B7CFF] file:px-4 file:py-2 file:font-medium file:text-white hover:file:bg-[#4a6bef]"
-                  />
-                  {paymentProofName ? (
-                    <p className="mt-2 text-xs text-gray-500">ไฟล์ที่เลือก: {paymentProofName}</p>
-                  ) : (
-                    <p className="mt-2 text-xs text-gray-500">รองรับเฉพาะไฟล์รูปภาพ ไม่เกิน 5 MB</p>
-                  )}
+                <p className="mt-2 text-sm text-gray-600">
+                  Unpaid booking without submitted payment will be held temporarily and cancelled automatically after 10 minutes.
+                </p>
+                <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                  <p className="font-semibold">Payment formula</p>
+                  <p className="mt-1">Rent = (Duration in hours) x Price per hour</p>
+                  <p>Deposit = 50% of Rent</p>
+                  <p className="font-semibold">Total now = Rent + Deposit</p>
                 </div>
-                {createdBookingId ? (
-                  <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                    มีรายการจองที่สร้างแล้ว (#{createdBookingId}) หากชำระเงินไม่สำเร็จสามารถกดยืนยันอีกครั้งเพื่อส่งหลักฐานใหม่ได้
-                  </p>
-                ) : null}
               </div>
             </section>
 
@@ -568,6 +462,9 @@ export default function BookingPage() {
             <div className="text-xs font-medium text-gray-500">
               Rent: {formatPrice(isTimeInvalid ? 0 : estimatedRent)} THB
             </div>
+            <div className="text-xs font-medium text-gray-500">
+              Deposit (50%): {formatPrice(isTimeInvalid ? 0 : estimatedDeposit)} THB
+            </div>
             <div className="text-lg font-bold text-gray-800">
               Total (Rent + 50%): {formatPrice(isTimeInvalid ? 0 : estimatedTotal)} THB
             </div>
@@ -579,7 +476,7 @@ export default function BookingPage() {
             disabled={isSubmitting || isFormInvalid}
             className="w-80 rounded-xl bg-[#4D94FF] py-3.5 text-center text-lg font-bold text-white shadow-sm transition-colors hover:bg-[#3A7EE6] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isSubmitting ? 'กำลังบันทึก...' : 'ยืนยันการชำระ'}
+            {isSubmitting ? 'Saving...' : 'Confirm Booking'}
           </button>
         </div>
       </div>

@@ -188,6 +188,83 @@ export async function getProfileImageByKey(objectKey: string): Promise<{
   return getObjectByKey(objectKey);
 }
 
+export function buildParkingLotImageUrl(objectKey: string): string {
+  return buildObjectProxyUrl('/api/parking-lot-image', objectKey);
+}
+
+export function extractParkingLotImageKey(imageUrl: string | null | undefined): string | null {
+  return extractObjectKeyByPrefix(imageUrl, '/api/parking-lot-image/');
+}
+
+export async function uploadParkingLotImage(
+  file: File,
+  ownerUserId: number,
+  lotId: number,
+  index: number
+): Promise<string> {
+  const contentType = file.type || 'application/octet-stream';
+  const extension = getFileExtension(file.name, contentType);
+  const objectKey = `parking-lots/${ownerUserId}/${lotId}/${Date.now()}-${index}-${sanitizeFilename(
+    file.name || `image.${extension}`
+  )}`;
+
+  await uploadObjectByKey(file, objectKey);
+  return buildParkingLotImageUrl(objectKey);
+}
+
+export async function deleteParkingLotImageByUrl(
+  imageUrl: string | null | undefined
+): Promise<void> {
+  const objectKey = extractParkingLotImageKey(imageUrl);
+  await deleteObjectByKey(objectKey);
+}
+
+export async function getParkingLotImageByKey(objectKey: string): Promise<{
+  body: Uint8Array;
+  contentType: string;
+}> {
+  return getObjectByKey(objectKey);
+}
+
+export function buildParkingLotEvidenceUrl(objectKey: string): string {
+  return buildObjectProxyUrl('/api/parking-lot-evidence', objectKey);
+}
+
+export function extractParkingLotEvidenceKey(
+  fileUrl: string | null | undefined
+): string | null {
+  return extractObjectKeyByPrefix(fileUrl, '/api/parking-lot-evidence/');
+}
+
+export async function uploadParkingLotEvidence(
+  file: File,
+  ownerUserId: number,
+  lotId: number
+): Promise<string> {
+  const contentType = file.type || 'application/octet-stream';
+  const extension = getFileExtension(file.name, contentType);
+  const objectKey = `parking-lot-evidence/${ownerUserId}/${lotId}/${Date.now()}-${sanitizeFilename(
+    file.name || `evidence.${extension}`
+  )}`;
+
+  await uploadObjectByKey(file, objectKey);
+  return buildParkingLotEvidenceUrl(objectKey);
+}
+
+export async function deleteParkingLotEvidenceByUrl(
+  fileUrl: string | null | undefined
+): Promise<void> {
+  const objectKey = extractParkingLotEvidenceKey(fileUrl);
+  await deleteObjectByKey(objectKey);
+}
+
+export async function getParkingLotEvidenceByKey(objectKey: string): Promise<{
+  body: Uint8Array;
+  contentType: string;
+}> {
+  return getObjectByKey(objectKey);
+}
+
 export function buildPaymentProofUrl(objectKey: string): string {
   return buildObjectProxyUrl('/api/payment-proof', objectKey);
 }

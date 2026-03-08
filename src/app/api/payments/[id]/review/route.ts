@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
+import { ensureUserWallet, ensureWalletTables } from '@/lib/wallet';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,9 +16,16 @@ type ReviewAction = 'APPROVE' | 'DENY';
 interface PaymentReviewRow extends RowDataPacket {
   pay_id: number;
   b_id: number;
+  user_id: number;
   pay_status: string;
+  pay_amount: number | string | null;
   b_status: string;
   owner_user_id: number;
+}
+
+interface WalletLockRow extends RowDataPacket {
+  wallet_id: number;
+  balance: number | string;
 }
 
 function readRequester(request: NextRequest): { userId: number; role: string } | null {
@@ -95,7 +103,9 @@ export async function PATCH(
       `SELECT
         p.pay_id,
         p.b_id,
+        b.user_id,
         p.pay_status,
+        p.pay_amount,
         b.b_status,
         pl.owner_user_id
       FROM payments p
@@ -123,13 +133,23 @@ export async function PATCH(
     try {
       await connection.beginTransaction();
 
-      const nextPaymentStatus = action === 'APPROVE' ? 'PAID' : 'FAILED';
-      const nextBookingStatus = action === 'APPROVE' ? 'PAYMENT_CONFIRMED' : 'WAITING_FOR_PAYMENT';
+      const bookingAlreadyCancelled = payment.b_status === 'CANCELLED';
+      let nextPaymentStatus: 'PAID' | 'FAILED' | 'REFUNDED' =
+        action === 'APPROVE' ? 'PAID' : 'FAILED';
+      let nextBookingStatus: 'PAYMENT_CONFIRMED' | 'CANCELLED' =
+        action === 'APPROVE' ? 'PAYMENT_CONFIRMED' : 'CANCELLED';
+      let refundedAmount = 0;
+      let walletBalanceAfter: number | null = null;
+
+      if (action === 'APPROVE' && bookingAlreadyCancelled) {
+        nextPaymentStatus = 'REFUNDED';
+        nextBookingStatus = 'CANCELLED';
+      }
 
       const [paymentUpdate] = await connection.query<ResultSetHeader>(
         `UPDATE payments
         SET pay_status = ?,
-            paid_at = CASE WHEN ? = 'PAID' THEN NOW() ELSE NULL END,
+            paid_at = CASE WHEN ? IN ('PAID', 'REFUNDED') THEN NOW() ELSE NULL END,
             updated_at = NOW()
         WHERE pay_id = ?
           AND pay_status = 'PENDING'`,
@@ -142,6 +162,66 @@ export async function PATCH(
           { error: 'This payment is already reviewed' },
           { status: 409 }
         );
+      }
+
+      if (nextPaymentStatus === 'REFUNDED') {
+        const payAmount = Number(payment.pay_amount || 0);
+        if (payAmount > 0) {
+          await ensureWalletTables(connection);
+          await ensureUserWallet(connection, Number(payment.user_id));
+
+          const [walletRows] = await connection.query<WalletLockRow[]>(
+            `SELECT wallet_id, balance
+            FROM wallets
+            WHERE user_id = ?
+            LIMIT 1
+            FOR UPDATE`,
+            [payment.user_id]
+          );
+
+          if (walletRows.length === 0) {
+            throw new Error('Unable to lock wallet for refund');
+          }
+
+          const wallet = walletRows[0];
+          const balanceBefore = Number(wallet.balance || 0);
+          refundedAmount = payAmount;
+          walletBalanceAfter = Number((balanceBefore + refundedAmount).toFixed(2));
+
+          await connection.query(
+            `UPDATE wallets
+            SET balance = ?,
+                updated_at = NOW()
+            WHERE wallet_id = ?`,
+            [walletBalanceAfter, wallet.wallet_id]
+          );
+
+          await connection.query(
+            `INSERT INTO wallet_transactions (
+              wallet_id,
+              user_id,
+              booking_id,
+              payment_id,
+              tx_type,
+              amount,
+              balance_before,
+              balance_after,
+              note,
+              created_at
+            )
+            VALUES (?, ?, ?, ?, 'REFUND', ?, ?, ?, ?, NOW())`,
+            [
+              wallet.wallet_id,
+              payment.user_id,
+              payment.b_id,
+              payment.pay_id,
+              refundedAmount,
+              balanceBefore,
+              walletBalanceAfter,
+              'Booking was cancelled by owner while payment was pending. Refund after admin approval.',
+            ]
+          );
+        }
       }
 
       await connection.query(
@@ -158,8 +238,12 @@ export async function PATCH(
         success: true,
         message:
           action === 'APPROVE'
-            ? 'Payment approved successfully'
-            : 'Payment denied successfully',
+            ? bookingAlreadyCancelled
+              ? 'Payment approved and refunded because booking was already cancelled'
+              : 'Payment approved successfully'
+            : bookingAlreadyCancelled
+              ? 'Payment denied. Booking remains cancelled.'
+              : 'Payment denied. Booking cancelled automatically.',
         payment: {
           id: paymentId,
           status: nextPaymentStatus,
@@ -168,6 +252,13 @@ export async function PATCH(
           id: payment.b_id,
           status: nextBookingStatus,
         },
+        refund:
+          nextPaymentStatus === 'REFUNDED'
+            ? {
+                amount: refundedAmount,
+                walletBalanceAfter,
+              }
+            : null,
       });
     } catch (error) {
       await connection.rollback();

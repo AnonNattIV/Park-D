@@ -125,14 +125,13 @@ export async function PATCH(
         AND b_status IN (${allowedStatuses.map(() => '?').join(', ')})
         AND checkin_proof IS NOT NULL
         AND checkin_datetime IS NOT NULL
-        AND checkout_datetime IS NOT NULL
-        AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') >= checkout_datetime`,
+        AND checkout_datetime IS NOT NULL`,
       [bookingId, requesterUserId, ...allowedStatuses]
     );
 
     if (updateResult.affectedRows === 0) {
       return NextResponse.json(
-        { error: 'Checkout is available only after booking end time' },
+        { error: 'Unable to submit checkout request right now' },
         { status: 409 }
       );
     }
@@ -149,6 +148,86 @@ export async function PATCH(
     console.error('Unable to submit checkout:', error);
     return NextResponse.json(
       { error: 'Unable to submit checkout right now' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const requesterUserId = readRequesterUserId(request);
+    if (!requesterUserId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const bookingId = parseBookingId(params.id);
+    if (!bookingId) {
+      return NextResponse.json({ error: 'Invalid booking id' }, { status: 400 });
+    }
+
+    const pool = getPool();
+    const [rows] = await pool.query<BookingCheckoutRow[]>(
+      `SELECT
+        b_id,
+        user_id,
+        b_status,
+        checkin_datetime,
+        checkin_proof,
+        checkout_datetime
+      FROM bookings
+      WHERE b_id = ?
+      LIMIT 1`,
+      [bookingId]
+    );
+
+    if (rows.length === 0) {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+    }
+
+    const booking = rows[0];
+    if (Number(booking.user_id) !== requesterUserId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    if (booking.b_status !== 'CHECKING_OUT') {
+      return NextResponse.json(
+        { error: 'This booking has no checkout request to cancel' },
+        { status: 409 }
+      );
+    }
+
+    const [updateResult] = await pool.query<ResultSetHeader>(
+      `UPDATE bookings
+      SET b_status = 'CHECKIN_APPROVED',
+          updated_at = NOW()
+      WHERE b_id = ?
+        AND user_id = ?
+        AND b_status = 'CHECKING_OUT'`,
+      [bookingId, requesterUserId]
+    );
+
+    if (updateResult.affectedRows === 0) {
+      return NextResponse.json(
+        { error: 'Unable to cancel checkout request right now' },
+        { status: 409 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Checkout request cancelled',
+      booking: {
+        id: bookingId,
+        status: 'CHECKIN_APPROVED',
+      },
+    });
+  } catch (error) {
+    console.error('Unable to cancel checkout:', error);
+    return NextResponse.json(
+      { error: 'Unable to cancel checkout right now' },
       { status: 500 }
     );
   }
