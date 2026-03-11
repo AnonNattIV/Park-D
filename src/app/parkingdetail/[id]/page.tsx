@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Tabbar from '@/components/Tabbar';
 import { hasStoredAuth } from '@/lib/auth-client';
+import { Star } from 'lucide-react';
 
 type Review = {
   score: number;

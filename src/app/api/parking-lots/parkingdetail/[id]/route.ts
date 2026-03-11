@@ -250,11 +250,17 @@ export async function GET(
       : null;
 
     const [revRows] = await pool.query<RowDataPacket[]>(
-      `SELECT r.score, r.comment, u.username
+      `SELECT 
+         r.review_id, 
+         r.score, 
+         r.comment, 
+         r.created_at, 
+         u.name AS username
        FROM reviews r
-       JOIN bookings b ON b.b_id = r.b_id
-       JOIN users u ON u.user_id = b.user_id
-       WHERE b.lot_id = ?`,
+       JOIN bookings b ON r.b_id = b.b_id
+       JOIN users u ON b.user_id = u.user_id
+       WHERE b.lot_id = ?
+       ORDER BY r.created_at DESC`,
       [id]
     );
 

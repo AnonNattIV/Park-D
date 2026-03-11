@@ -155,6 +155,19 @@ export async function GET(
       [bookingId]
     );
 
+    const [reviewRows] = await pool.query<RowDataPacket[]>(
+      `SELECT score, comment, created_at, TIMESTAMPDIFF(MINUTE, created_at, NOW()) as diff_minutes 
+       FROM reviews WHERE b_id = ? LIMIT 1`,
+      [bookingId] // หรือตัวแปร id ของการจองที่คุณใช้
+    );
+
+    const reviewData = reviewRows.length > 0 ? {
+      score: reviewRows[0].score,
+      comment: reviewRows[0].comment,
+      createdAt: reviewRows[0].created_at,
+      diffMinutes: reviewRows[0].diff_minutes
+    } : null;
+
     if (rows.length === 0) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
     }
@@ -207,6 +220,7 @@ export async function GET(
               proofUrl: row.proof_image_url,
             }
           : null,
+        review: reviewData,
       },
     });
   } catch (error) {

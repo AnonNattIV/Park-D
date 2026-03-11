@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Tabbar from '@/components/Tabbar';
+import { Star } from 'lucide-react';
 import { clearStoredAuth, readStoredAuthUser, readStoredToken } from '@/lib/auth-client';
 
 type BookingDetailResponse = {
@@ -38,6 +39,12 @@ type BookingDetailResponse = {
       amount: number;
       paidAt: string | null;
       proofUrl: string | null;
+    }
+    review?: {
+      score: number;
+      comment: string | null;
+      createdAt: string;
+      diffMinutes: number;
     } | null;
   };
 };
@@ -120,6 +127,11 @@ export default function BookingHistoryDetailPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkinProofFile, setCheckinProofFile] = useState<File | null>(null);
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
+  const isApprovedAndCheckedOut = useMemo(() => {
+    if (!booking) return false;
+    // อนุญาตให้รีวิวได้เมื่อ Owner กดยืนยันแล้ว
+    return ['CHECKOUT_APPROVED', 'COMPLETED'].includes(booking.status.toUpperCase());
+  }, [booking]);
 
   useEffect(() => {
     const storedToken = readStoredToken();
@@ -749,6 +761,49 @@ export default function BookingHistoryDetailPage() {
                   ) : null}
                 </div>
               ) : null}
+            </div>
+          ) : null}
+
+          {booking.review ? (
+            <div className="mt-8 pt-6 border-t border-slate-200">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-bold text-slate-800">รีวิวของคุณ</h3>
+              </div>
+              
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-sm">
+                <div className="flex mb-2 gap-1">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <Star
+                      key={star}
+                      size={20}
+                      className={star <= booking.review!.score ? "fill-yellow-500 text-yellow-500" : "text-gray-200"}
+                    />
+                  ))}
+                </div>
+                <p className="text-sm text-slate-700 mt-2">
+                  {booking.review.comment || <span className="text-slate-400 italic">ไม่มีความคิดเห็น</span>}
+                </p>
+              </div>
+
+              {/* แสดงปุ่มแก้ไขรีวิวเสมอ */}
+              <Link href={`/review/${booking.id}`}>
+                <button className="w-full mt-4 flex items-center justify-center gap-2 py-3 border-2 border-yellow-500 text-yellow-600 font-bold rounded-xl hover:bg-yellow-50 transition-colors">
+                  แก้ไขรีวิว
+                </button>
+              </Link>
+            </div>
+          ) : ['CHECKOUT_APPROVED', 'COMPLETED'].includes(booking.status.toUpperCase()) ? (
+            <div className="mt-8 pt-6 border-t border-slate-200">
+              <h3 className="text-lg font-bold text-slate-800 mb-3 text-center">การใช้งานเสร็จสิ้น</h3>
+              <p className="text-sm text-slate-500 mb-4 text-center">
+                กรุณาให้คะแนนเพื่อเป็นประโยชน์ต่อผู้ใช้งานท่านอื่น
+              </p>
+              <Link href={`/review/${booking.id}`}>
+                <button className="w-full flex items-center justify-center gap-2 py-3 bg-yellow-500 text-white font-bold rounded-xl hover:bg-yellow-600 transition-colors shadow-md">
+                  <Star size={20} className="fill-white" />
+                  ให้คะแนน / รีวิวสถานที่
+                </button>
+              </Link>
             </div>
           ) : null}
         </div>
