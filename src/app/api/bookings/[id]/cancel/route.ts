@@ -18,7 +18,9 @@ interface BookingCancelRow extends RowDataPacket {
   pay_id: number | null;
   pay_status: string | null;
   pay_amount: number | string | null;
+  paid_at: Date | string | null;
   is_before_checkin: number | string;
+  is_payment_grace_window: number | string;
 }
 
 interface WalletLockRow extends RowDataPacket {
@@ -82,11 +84,19 @@ export async function PATCH(
         p.pay_id,
         p.pay_status,
         p.pay_amount,
+        p.paid_at,
         CASE
           WHEN b.checkin_datetime IS NOT NULL
            AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') <= DATE_SUB(b.checkin_datetime, INTERVAL 1 DAY)
           THEN 1 ELSE 0
-        END AS is_before_checkin
+        END AS is_before_checkin,
+        CASE
+          WHEN p.pay_status = 'PAID'
+           AND p.paid_at IS NOT NULL
+           AND b.checkin_proof IS NULL
+           AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') <= DATE_ADD(p.paid_at, INTERVAL 10 MINUTE)
+          THEN 1 ELSE 0
+        END AS is_payment_grace_window
       FROM bookings b
       LEFT JOIN payments p ON p.b_id = b.b_id
       WHERE b.b_id = ?
@@ -114,9 +124,20 @@ export async function PATCH(
       );
     }
 
-    if (Number(booking.is_before_checkin) !== 1) {
+    const canCancelBeforeReservation = Number(booking.is_before_checkin) === 1;
+    const canCancelInPaymentGraceWindow = Number(booking.is_payment_grace_window) === 1;
+    const canCancelBeforePaymentConfirmation = booking.b_status === 'WAITING_FOR_PAYMENT';
+
+    if (
+      !canCancelBeforePaymentConfirmation &&
+      !canCancelBeforeReservation &&
+      !canCancelInPaymentGraceWindow
+    ) {
       return NextResponse.json(
-        { error: 'Booking can be cancelled only at least 1 day before reservation time' },
+        {
+          error:
+            'Booking can be cancelled anytime before payment confirmation, or at least 1 day before reservation time, or within 10 minutes after payment success',
+        },
         { status: 409 }
       );
     }
@@ -189,7 +210,9 @@ export async function PATCH(
             refundedAmount,
             balanceBefore,
             walletBalanceAfter,
-            'Renter cancelled booking at least 1 day before reservation. Auto refund.',
+            canCancelInPaymentGraceWindow
+              ? 'Renter cancelled booking within 10 minutes after payment success. Auto refund.'
+              : 'Renter cancelled booking at least 1 day before reservation. Auto refund.',
           ]
         );
 

@@ -192,7 +192,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    if (booking.b_status !== 'CHECKING_OUT') {
+    if (booking.b_status !== 'CHECKING_OUT' && booking.b_status !== 'CHECKOUT_REJECTED') {
       return NextResponse.json(
         { error: 'This booking has no checkout request to cancel' },
         { status: 409 }
@@ -205,7 +205,7 @@ export async function DELETE(
           updated_at = NOW()
       WHERE b_id = ?
         AND user_id = ?
-        AND b_status = 'CHECKING_OUT'`,
+        AND b_status IN ('CHECKING_OUT', 'CHECKOUT_REJECTED')`,
       [bookingId, requesterUserId]
     );
 
