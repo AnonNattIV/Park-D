@@ -8,7 +8,7 @@ type OwnerRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 type OwnerRequestAction = 'APPROVE_OWNER' | 'REJECT_OWNER';
 type ParkingLotRequestStatus = 'REQUEST' | 'APPROVED' | 'DENIED';
 type ParkingLotRequestAction = 'APPROVE' | 'DENY';
-type AdminMenu = 'owner' | 'parking' | 'payment';
+type AdminMenu = 'owner' | 'parking' | 'payment' | 'booking';
 type PaymentReviewAction = 'APPROVE' | 'DENY';
 
 interface PaymentApprovalItem {
@@ -107,6 +107,22 @@ interface PaymentReviewResponse {
   };
 }
 
+interface BookingHistoryItem {
+  id: number;
+  status: string;
+  checkin: string;
+  checkout: string;
+  createdAt: string;
+  plateId: string;
+  renterUsername: string;
+  renterFirstName: string | null;
+  renterLastName: string | null;
+  lotName: string;
+  lotLocation: string;
+  vehicleBrand: string | null;
+  vehicleModel: string | null;
+}
+
 function formatSubmittedAt(value: string): string {
   const parsed = new Date(value);
 
@@ -186,6 +202,13 @@ export default function AdminHomePage() {
   const [paymentActionError, setPaymentActionError] = useState('');
   const [paymentActionMessage, setPaymentActionMessage] = useState('');
   const [processingPaymentId, setProcessingPaymentId] = useState<number | null>(null);
+
+  const [bookings, setBookings] = useState<BookingHistoryItem[]>([]);
+  const [isBookingLoading, setIsBookingLoading] = useState(false);
+  const [bookingFilterStatus, setBookingFilterStatus] = useState('ALL');
+  const [bookingSortBy, setBookingSortBy] = useState('created_at');
+  const [bookingOrder, setBookingOrder] = useState('desc');
+  const [bookingLoadError, setBookingLoadError] = useState('');
 
   useEffect(() => {
     const storedToken = readStoredToken();
@@ -343,6 +366,47 @@ export default function AdminHomePage() {
     void loadParkingLotRequests();
     void loadPaymentApprovals();
   }, [isReady, loadOwnerRequests, loadParkingLotRequests, loadPaymentApprovals, token]);
+
+  const loadBookings = useCallback(async () => {
+    if (!token) return;
+    setIsBookingLoading(true);
+    setBookingLoadError('');
+
+    try {
+      const params = new URLSearchParams({
+        status: bookingFilterStatus,
+        sortBy: bookingSortBy,
+        order: bookingOrder,
+      });
+
+      const response = await fetch(`/api/bookings?${params.toString()}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      });
+
+      if (response.status === 401) {
+        clearStoredAuth();
+        router.replace('/login');
+        return;
+      }
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to load bookings');
+
+      setBookings(result.bookings || []);
+    } catch (error) {
+      console.error('Unable to load bookings:', error);
+    } finally {
+      setIsBookingLoading(false);
+    }
+  }, [token, bookingFilterStatus, bookingSortBy, bookingOrder, router]);
+
+  useEffect(() => {
+    if (activeMenu === 'booking') {
+      void loadBookings();
+    }
+  }, [activeMenu, loadBookings]);
 
   const handleLogout = () => {
     clearStoredAuth();
@@ -553,28 +617,28 @@ export default function AdminHomePage() {
   };
 
   const pendingOwnerCount = useMemo(
-    () => ownerRequests.filter((item) => item.status === 'PENDING').length,
+    () => ownerRequests.filter((item) => (item.status || '').toUpperCase() === 'PENDING').length,
     [ownerRequests]
   );
 
   const pendingParkingCount = useMemo(
-    () => parkingRequests.filter((item) => item.status === 'REQUEST').length,
+    () => parkingRequests.filter((item) => (item.status || '').toUpperCase() === 'REQUEST').length,
     [parkingRequests]
   );
 
   const approvedParkingCount = useMemo(
-    () => parkingRequests.filter((item) => item.status === 'APPROVED').length,
+    () => parkingRequests.filter((item) => (item.status || '').toUpperCase() === 'APPROVED').length,
     [parkingRequests]
   );
 
   const deniedParkingCount = useMemo(
-    () => parkingRequests.filter((item) => item.status === 'DENIED').length,
+    () => parkingRequests.filter((item) => (item.status || '').toUpperCase() === 'DENIED').length,
     [parkingRequests]
   );
 
   const pendingPaymentCount = useMemo(
     () =>
-      paymentApprovals.filter((item) => item.payment.status.toUpperCase() === 'PENDING')
+      paymentApprovals.filter((item) => (item.payment?.status || '').toUpperCase() === 'PENDING')
         .length,
     [paymentApprovals]
   );
@@ -662,6 +726,19 @@ export default function AdminHomePage() {
             >
               Payment Proofs
             </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveMenu('booking')}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                activeMenu === 'booking'
+                  ? 'bg-white text-slate-900 shadow'
+                  : 'text-slate-600 hover:text-slate-800'
+                }`}
+              >
+                Booking History
+              </button>
+            
           </div>
         </section>
 
@@ -881,7 +958,7 @@ export default function AdminHomePage() {
               </div>
             )}
           </section>
-        ) : (
+        ) : activeMenu === 'payment' ? (
           <section className="rounded-2xl bg-white p-5 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -1010,7 +1087,107 @@ export default function AdminHomePage() {
               </div>
             )}
           </section>
-        )}
+        ) : activeMenu === 'booking' ? (
+          <section className="rounded-2xl bg-white p-5 shadow-sm">
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">Booking & Rental History</h2>
+                <p className="text-sm text-slate-500">Monitor all platform bookings</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+              <select 
+                  value={bookingFilterStatus}
+                  onChange={(e) => setBookingFilterStatus(e.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                >
+                  <option value="ALL">All Statuses</option>
+                  <option value="WAITING_FOR_PAYMENT">Pending Payment</option>
+                  <option value="PAYMENT_CONFIRMED">Paid</option>
+                  <option value="CHECKOUT_APPROVED">Completed</option>
+                  <option value="CANCELLED">Cancelled</option>
+                </select>
+
+                <select 
+                  value={bookingSortBy}
+                  onChange={(e) => setBookingSortBy(e.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                >
+                  <option value="created_at">Date Created</option>
+                  <option value="checkin_datetime">Check-in Date</option>
+                </select>
+                
+                <button
+                  onClick={() => setBookingOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  {bookingOrder === 'asc' ? '↑ Asc' : '↓ Desc'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void loadBookings()}
+                  disabled={isBookingLoading}
+                  className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-70"
+                >
+                  {isBookingLoading ? 'Loading...' : 'Refresh'}
+                </button>
+              </div>
+            </div>
+
+            {bookingLoadError ? (
+              <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {bookingLoadError}
+              </div>
+            ) : null}
+
+            {isBookingLoading ? (
+              <p className="py-8 text-center text-sm text-slate-500">Loading booking history...</p>
+            ) : bookings.length === 0 ? (
+              <p className="py-8 text-center text-sm text-slate-500">No bookings match your criteria.</p>
+            ) : (
+              <div className="space-y-3">
+                {bookings.map((booking) => (
+                  <article key={booking.id} className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition">
+                    <div className="grid gap-4 md:grid-cols-[2fr_1.5fr_1fr] md:items-center">
+                      <div>
+                        <p className="font-semibold text-slate-800">Booking #{booking.id} - {booking.lotName}</p>
+                        <p className="text-sm text-slate-500">Location: {booking.lotLocation}</p>
+                        <p className="text-sm text-slate-500 mt-1">
+                          <span className="font-medium text-slate-700">Renter:</span> {booking.renterUsername} ({booking.renterFirstName || ''} {booking.renterLastName || ''})
+                        </p>
+                        <p className="text-sm text-slate-500">
+                          <span className="font-medium text-slate-700">Vehicle:</span> {booking.plateId} {booking.vehicleBrand ? `(${booking.vehicleBrand} ${booking.vehicleModel || ''})` : ''}
+                        </p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <p className="text-sm text-slate-600">
+                          <span className="inline-block w-16 text-slate-400">In:</span> 
+                          {booking.checkin ? formatSubmittedAt(booking.checkin) : 'Pending'}
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          <span className="inline-block w-16 text-slate-400">Out:</span> 
+                          {booking.checkout ? formatSubmittedAt(booking.checkout) : 'Pending'}
+                        </p>
+                      </div>
+
+                      <div className="text-right flex flex-col items-end gap-2">
+                        <span className={`rounded-lg px-3 py-1 text-xs font-semibold ${
+                          booking.status === 'CHECKOUT_APPROVED' ? 'bg-emerald-100 text-emerald-800' :
+                          booking.status === 'CANCELLED' ? 'bg-rose-100 text-rose-800' :
+                          'bg-amber-100 text-amber-800'
+                        }`}>
+                          {booking.status}
+                        </span>
+                        <p className="text-xs text-slate-400">Created: {new Date(booking.createdAt).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
       </div>
     </div>
   );

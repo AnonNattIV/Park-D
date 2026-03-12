@@ -263,3 +263,75 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export async function GET(request: NextRequest) {
+  try {
+    const requester = readRequester(request);
+    if (!requester || requester.role !== 'admin') {
+      return NextResponse.json({ error: 'Unauthorized. Admin access required.' }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const statusFilter = searchParams.get('status');
+    const sortBy = searchParams.get('sortBy') || 'created_at';
+    const order = searchParams.get('order') === 'asc' ? 'ASC' : 'DESC';
+
+    const pool = getPool();
+
+    try {
+      await pool.query(
+        `CREATE TABLE IF NOT EXISTS booking_vehicle_metadata (
+          b_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+          vehicle_brand VARCHAR(100) NULL,
+          vehicle_model VARCHAR(100) NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+      );
+    } catch (tableError) {
+      console.error('Unable to verify metadata table:', tableError);
+    }
+
+    let query = `
+      SELECT 
+        b.b_id as id, 
+        b.b_status as status, 
+        b.checkin_datetime as checkin, 
+        b.checkout_datetime as checkout, 
+        b.created_at as createdAt,
+        b.plate_id as plateId,
+        COALESCE(u.username, 'Unknown User') as renterUsername, 
+        COALESCE(u.name, '') as renterFirstName, 
+        COALESCE(u.surname, '') as renterLastName,
+        COALESCE(l.lot_name, 'Unknown Lot') as lotName, 
+        COALESCE(l.location, 'Unknown Location') as lotLocation,
+        vm.vehicle_brand as vehicleBrand, 
+        vm.vehicle_model as vehicleModel
+      FROM bookings b
+      LEFT JOIN users u ON b.user_id = u.user_id
+      LEFT JOIN parking_lots l ON b.lot_id = l.lot_id
+      LEFT JOIN booking_vehicle_metadata vm ON b.b_id = vm.b_id
+      WHERE 1=1
+    `;
+    
+    const queryParams: any[] = [];
+
+    if (statusFilter && statusFilter !== 'ALL') {
+      query += ` AND b.b_status = ?`;
+      queryParams.push(statusFilter);
+    }
+
+    // Ensure safe order by to prevent SQL injection
+    const allowedSortColumns = ['created_at', 'checkin_datetime', 'checkout_datetime'];
+    const safeSortBy = allowedSortColumns.includes(sortBy) ? sortBy : 'created_at';
+    
+    query += ` ORDER BY b.${safeSortBy} ${order}`;
+
+    const [rows] = await pool.query(query, queryParams);
+
+    return NextResponse.json({ bookings: rows });
+  } catch (error) {
+    console.error('Unable to fetch bookings:', error);
+    return NextResponse.json({ error: 'Unable to fetch bookings right now.' }, { status: 500 });
+  }
+}
