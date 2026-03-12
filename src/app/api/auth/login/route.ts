@@ -9,7 +9,7 @@ interface LoginRow extends RowDataPacket {
   username: string;
   email: string;
   password_hash: string;
-  u_status: 'ACTIVE' | 'INACTIVE' | 'BANNED';
+  u_status: string;
   owner_request_status: OwnerRequestStatus;
   roles: string;
   has_owner_profile: number;
@@ -48,8 +48,17 @@ export async function POST(request: NextRequest) {
     }
 
     const user = rows[0];
-    if (user.u_status !== 'ACTIVE') {
-      return NextResponse.json({ error: 'This account is not active' }, { status: 403 });
+    const currentStatus = String(user.u_status || '').toUpperCase().trim();
+    
+    if (currentStatus !== 'ACTIVE') {
+      let errorMessage = 'This account is not active';
+      if (currentStatus === 'SUSPENDED') {
+        errorMessage = 'Your account has been suspended.';
+      } else if (currentStatus === 'BANNED') {
+        errorMessage = 'Your account has been permanently banned.';
+      }
+
+      return NextResponse.json({ error: errorMessage }, { status: 403 });
     }
 
     const passwordValid = await verifyPassword(password, user.password_hash);

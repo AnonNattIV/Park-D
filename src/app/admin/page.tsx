@@ -3,13 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AuthUser, clearStoredAuth, readStoredAuthUser, readStoredToken } from '@/lib/auth-client';
+import { toast } from 'react-hot-toast';
 
 type OwnerRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 type OwnerRequestAction = 'APPROVE_OWNER' | 'REJECT_OWNER';
 type ParkingLotRequestStatus = 'REQUEST' | 'APPROVED' | 'DENIED';
 type ParkingLotRequestAction = 'APPROVE' | 'DENY';
-type AdminMenu = 'owner' | 'parking' | 'payment' | 'booking';
+type AdminMenu = 'owner' | 'parking' | 'payment' | 'booking' | 'users';
 type PaymentReviewAction = 'APPROVE' | 'DENY';
+type UserStatus = 'ACTIVE' | 'SUSPENDED' | 'BANNED';
 
 interface PaymentApprovalItem {
   payment: {
@@ -124,6 +126,32 @@ interface BookingHistoryItem {
   vehicleModel: string | null;
 }
 
+interface UserManagementItem {
+  id: number;
+  username: string;
+  f_name: string | null;
+  l_name: string | null;
+  email: string;
+  role: string;
+  status: UserStatus;
+  created_at: string;
+}
+
+interface UserManagementListResponse {
+  users?: UserManagementItem[];
+  error?: string;
+}
+
+interface UserManagementPatchResponse {
+  success?: boolean;
+  message?: string;
+  error?: string;
+  user?: {
+    id: number;
+    status: UserStatus;
+  };
+}
+
 function formatSubmittedAt(value: string): string {
   const parsed = new Date(value);
 
@@ -209,6 +237,13 @@ export default function AdminHomePage() {
   const [bookingSortBy, setBookingSortBy] = useState('created_at');
   const [bookingOrder, setBookingOrder] = useState('desc');
   const [bookingLoadError, setBookingLoadError] = useState('');
+
+  const [usersList, setUsersList] = useState<UserManagementItem[]>([]);
+  const [isUserLoading, setIsUserLoading] = useState(false);
+  const [userLoadError, setUserLoadError] = useState('');
+  const [userActionError, setUserActionError] = useState('');
+  const [userActionMessage, setUserActionMessage] = useState('');
+  const [processingUserId, setProcessingUserId] = useState<number | null>(null);
 
   useEffect(() => {
     const storedToken = readStoredToken();
@@ -392,17 +427,31 @@ export default function AdminHomePage() {
     }
   }, [token, bookingFilterStatus, bookingSortBy, bookingOrder, router]);
 
+  const loadUsersList = useCallback(async () => {
+    if (!token) return;
+    setIsUserLoading(true); setUserLoadError('');
+    try {
+      const response = await fetch('/api/admin/users', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      if (response.status === 401) { clearStoredAuth(); router.replace('/login'); return; }
+      const result = await response.json() as UserManagementListResponse;
+      if (!response.ok) throw new Error(result.error || 'Failed to load users');
+      setUsersList(result.users || []);
+    } catch (error) { setUserLoadError(error instanceof Error ? error.message : 'Error loading users.'); } 
+    finally { setIsUserLoading(false); }
+  }, [token, router]);
+
   useEffect(() => {
     if (activeMenu === 'booking') {
       void loadBookings();
     }
-  }, [activeMenu, loadBookings]);
+    if (activeMenu === 'users') void loadUsersList();
+  }, [activeMenu, loadBookings, bookingFilterStatus, bookingSortBy, bookingOrder]);
 
   const handleLogout = () => {
     clearStoredAuth();
     router.replace('/login');
   };
-
+  
   const handleOwnerRequestAction = async (item: OwnerRequestItem, action: OwnerRequestAction) => {
     if (!token || item.status !== 'PENDING') {
       return;
@@ -594,6 +643,25 @@ export default function AdminHomePage() {
     }
   };
 
+  const handleUserStatusUpdate = async (item: UserManagementItem, newStatus: UserStatus) => {
+    if (!token) return;
+    if (!confirm(`Are you sure you want to change the status of ${item.username} to ${newStatus}?`)) return;
+    setUserActionError(''); setUserActionMessage(''); setProcessingUserId(item.id);
+
+    try {
+      const response = await fetch(`/api/admin/users/${item.id}/status`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ status: newStatus }),
+      });
+      if (response.status === 401) { clearStoredAuth(); router.replace('/login'); return; }
+      const result = await response.json() as UserManagementPatchResponse;
+      if (!response.ok) throw new Error(result.error || 'Failed to update user status');
+
+      setUsersList(prev => prev.map(u => (u.id === item.id ? { ...u, status: newStatus } : u)));
+      setUserActionMessage(result.message || `Status updated to ${newStatus}.`);
+    } catch (error) { setUserActionError(error instanceof Error ? error.message : 'Error updating user.'); } 
+    finally { setProcessingUserId(null); }
+  };
+
   const pendingOwnerCount = useMemo(
     () => ownerRequests.filter((item) => (item.status || '').toUpperCase() === 'PENDING').length,
     [ownerRequests]
@@ -716,6 +784,18 @@ export default function AdminHomePage() {
               >
                 Booking History
               </button>
+
+              <button
+              type="button"
+              onClick={() => setActiveMenu('users')}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                activeMenu === 'users'
+                  ? 'bg-white text-slate-900 shadow'
+                  : 'text-slate-600 hover:text-slate-800'
+              }`}
+            >
+              User Management
+            </button>
             
           </div>
         </section>
@@ -1077,7 +1157,7 @@ export default function AdminHomePage() {
                 })}
               </div>
             )}
-          </section>
+          </section>       
         ) : activeMenu === 'booking' ? (
           <section className="rounded-2xl bg-white p-5 shadow-sm">
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1179,6 +1259,78 @@ export default function AdminHomePage() {
             )}
           </section>
         ) : null}
+        {activeMenu === 'users' ? (
+          <section className="rounded-2xl bg-white p-5 shadow-sm">
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">User Management</h2>
+                <p className="text-sm text-slate-500">Manage user access, suspend, or ban accounts</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadUsersList()}
+                disabled={isUserLoading}
+                className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-70"
+              >
+                {isUserLoading ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
+
+            {userLoadError ? (
+              <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{userLoadError}</div>
+            ) : null}
+            {userActionError ? (
+              <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{userActionError}</div>
+            ) : null}
+            {userActionMessage ? (
+              <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{userActionMessage}</div>
+            ) : null}
+
+            {isUserLoading ? (
+              <p className="py-8 text-center text-sm text-slate-500">Loading users...</p>
+            ) : usersList.length === 0 ? (
+              <p className="py-8 text-center text-sm text-slate-500">No users found.</p>
+            ) : (
+              <div className="space-y-3">
+                {usersList.map((userItem) => {
+                  const isProcessing = processingUserId === userItem.id;
+
+                  return (
+                    <article key={userItem.id} className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition bg-white">
+                      <div className="grid gap-4 md:grid-cols-[2fr_1.5fr_auto] md:items-center">
+                        <div>
+                          <p className="font-semibold text-slate-800">{userItem.f_name || ''} {userItem.l_name || ''}</p>
+                          <p className="text-sm text-slate-500">Username: {userItem.username}</p>
+                          <p className="text-sm text-slate-500">Email: {userItem.email}</p>
+                          <p className="text-sm text-slate-500 mt-1">Role: <span className="font-medium text-blue-600">{userItem.role}</span></p>
+                        </div>
+
+                        <div className="space-y-2">
+                           <span className={`inline-flex rounded-lg px-3 py-1 text-xs font-semibold ${userItem.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : userItem.status === 'SUSPENDED' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'}`}>{userItem.status || 'ACTIVE'}</span>
+                            <p className="text-xs text-slate-400">Joined: {new Date(userItem.created_at).toLocaleDateString()}</p>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={userItem.status || 'ACTIVE'}
+                            onChange={(e) => void handleUserStatusUpdate(userItem, e.target.value as UserStatus)}
+                            disabled={isProcessing}
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none disabled:opacity-70 disabled:cursor-not-allowed bg-white"
+                          >
+                            <option value="ACTIVE">✅ Active (ใช้งานปกติ)</option>
+                            <option value="SUSPENDED">⏸️ Suspend (ระงับชั่วคราว)</option>
+                            <option value="BANNED">⛔ Ban (แบนถาวร)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        ) : null}
+
       </div>
     </div>
   );
