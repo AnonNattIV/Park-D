@@ -2,11 +2,18 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { HomeIcon, BuildingOffice2Icon, UserCircleIcon, ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline';
+import {
+  HomeIcon,
+  BuildingOffice2Icon,
+  UserCircleIcon,
+  ArrowRightOnRectangleIcon,
+  BellIcon,
+} from '@heroicons/react/24/outline';
 import {
   AUTH_STATE_CHANGE_EVENT,
   clearStoredAuth,
   hasStoredAuth,
+  readStoredToken,
 } from '@/lib/auth-client';
 
 type TabType = 'home' | 'owner' | 'aboutme';
@@ -36,6 +43,7 @@ export default function Tabbar() {
   const router = useRouter();
   const pathname = usePathname();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const showNavigationTabs = pathname !== '/' || isAuthenticated;
 
   useEffect(() => {
@@ -53,6 +61,57 @@ export default function Tabbar() {
       window.removeEventListener('focus', syncAuthState);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setUnreadNotificationCount(0);
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadUnreadCount = async () => {
+      const token = readStoredToken();
+      if (!token) {
+        if (isMounted) {
+          setUnreadNotificationCount(0);
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/notifications?summary=1', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          cache: 'no-store',
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const result = (await response.json()) as { unreadCount?: number };
+        if (isMounted) {
+          setUnreadNotificationCount(Number(result.unreadCount || 0));
+        }
+      } catch (error) {
+        console.error('Unable to load unread notifications:', error);
+      }
+    };
+
+    void loadUnreadCount();
+
+    const refreshTimer = window.setInterval(() => {
+      void loadUnreadCount();
+    }, 30000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(refreshTimer);
+    };
+  }, [isAuthenticated, pathname]);
 
   const getActiveTab = (): TabType => {
     if (pathname === '/' || pathname === '/user/home') return 'home';
@@ -77,6 +136,9 @@ export default function Tabbar() {
 
     router.push('/login');
   };
+
+  const notificationsLabel = unreadNotificationCount > 99 ? '99+' : String(unreadNotificationCount);
+  const isNotificationsPath = pathname.startsWith('/notifications');
 
   return (
     <>
@@ -117,6 +179,25 @@ export default function Tabbar() {
                     </button>
                   ))}
                 </div>
+              ) : null}
+
+              {isAuthenticated ? (
+                <button
+                  onClick={() => handleTabClick('/notifications')}
+                  className={`relative flex items-center justify-center rounded-full p-2 transition-all duration-300 ${
+                    isNotificationsPath
+                      ? 'bg-blue-50 text-[#5B7CFF]'
+                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-800'
+                  }`}
+                  aria-label="Notifications"
+                >
+                  <BellIcon className="h-6 w-6" />
+                  {unreadNotificationCount > 0 ? (
+                    <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-rose-500 px-1.5 text-center text-[10px] font-bold leading-[18px] text-white">
+                      {notificationsLabel}
+                    </span>
+                  ) : null}
+                </button>
               ) : null}
 
               {/* Sign In / Log Out Button */}
@@ -173,6 +254,32 @@ export default function Tabbar() {
               </button>
             ))}
           </div>
+
+          {/* Sign In / Log Out Button (icon only on mobile) */}
+          {isAuthenticated ? (
+            <button
+              onClick={() => handleTabClick('/notifications')}
+              className={`
+                relative flex flex-col items-center justify-center min-h-[44px] min-w-[44px] px-2 py-1 rounded-2xl transition-all duration-300
+                ${
+                  isNotificationsPath
+                    ? 'text-[#5B7CFF] bg-[#5B7CFF]/10'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                }
+              `}
+              aria-label="Notifications"
+            >
+              <BellIcon className="h-6 w-6" />
+              {unreadNotificationCount > 0 ? (
+                <span className="absolute right-0.5 top-0.5 min-w-[16px] rounded-full bg-rose-500 px-1 text-center text-[9px] font-bold leading-[16px] text-white">
+                  {notificationsLabel}
+                </span>
+              ) : null}
+              <span className="text-[10px] font-medium mt-0.5 leading-none">
+                Noti
+              </span>
+            </button>
+          ) : null}
 
           {/* Sign In / Log Out Button (icon only on mobile) */}
           <button

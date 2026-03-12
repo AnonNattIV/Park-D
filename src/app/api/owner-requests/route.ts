@@ -8,6 +8,12 @@ import {
   uploadOwnerRequestEvidence,
 } from '@/lib/storage';
 import type { OwnerRequestStatus } from '@/lib/roles';
+import {
+  createNotification,
+  createNotifications,
+  ensureNotificationTables,
+  listActiveAdminUserIds,
+} from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -227,6 +233,33 @@ export async function POST(request: NextRequest) {
       await deleteOwnerRequestEvidenceByUrl(replacedEvidenceUrl);
     }
 
+    try {
+      await ensureNotificationTables(pool);
+      const adminIds = await listActiveAdminUserIds(pool);
+      if (adminIds.length > 0) {
+        await createNotifications(
+          pool,
+          adminIds.map((adminUserId) => ({
+            userId: adminUserId,
+            type: 'OWNER_REQUEST_SUBMITTED',
+            title: 'New owner request',
+            message: `${user.username} submitted an owner role request.`,
+            actionUrl: '/admin',
+          }))
+        );
+      }
+
+      await createNotification(pool, {
+        userId: requesterUserId,
+        type: 'OWNER_REQUEST_SUBMITTED',
+        title: 'Owner request submitted',
+        message: 'Your owner request has been submitted and is waiting for admin review.',
+        actionUrl: '/owner/request',
+      });
+    } catch (notificationError) {
+      console.error('Unable to create owner request notifications:', notificationError);
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Owner request submitted',
@@ -292,6 +325,19 @@ export async function DELETE(request: NextRequest) {
         { error: 'Owner request is no longer pending' },
         { status: 409 }
       );
+    }
+
+    try {
+      await ensureNotificationTables(pool);
+      await createNotification(pool, {
+        userId: requesterUserId,
+        type: 'OWNER_REQUEST_CANCELLED',
+        title: 'Owner request cancelled',
+        message: 'Your owner request was cancelled. You can edit and submit again.',
+        actionUrl: '/owner/request',
+      });
+    } catch (notificationError) {
+      console.error('Unable to create owner request cancel notification:', notificationError);
     }
 
     const metadata = await readOwnerRequestMetadata(requesterUserId);

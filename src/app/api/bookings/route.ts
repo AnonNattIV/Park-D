@@ -4,6 +4,10 @@ import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { parseBangkokDateTimeInput } from '@/lib/time-bangkok';
 import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
+import {
+  createNotification,
+  ensureNotificationTables,
+} from '@/lib/notifications';
 
 interface TokenPayload {
   userId?: string;
@@ -34,6 +38,11 @@ const occupiedBookingStatuses = [
   'CHECKING_OUT',
   'CHECKOUT_REJECTED',
 ] as const;
+const MIN_CHECKIN_LEAD_TIME_MS = 10 * 60 * 1000;
+
+function getCurrentMinuteEpoch(): number {
+  return Math.floor(Date.now() / 60000) * 60000;
+}
 
 function readRequester(request: NextRequest): { userId: number; role: string } | null {
   const authorization = request.headers.get('authorization') || '';
@@ -103,6 +112,14 @@ export async function POST(request: NextRequest) {
     if (!checkinDateTime || !checkoutDateTime) {
       return NextResponse.json(
         { error: 'Check-in and check-out date/time are required' },
+        { status: 400 }
+      );
+    }
+
+    const minimumCheckinEpoch = getCurrentMinuteEpoch() + MIN_CHECKIN_LEAD_TIME_MS;
+    if (checkinDateTime.comparableTime < minimumCheckinEpoch) {
+      return NextResponse.json(
+        { error: 'Check-in time must be at least 10 minutes from current time' },
         { status: 400 }
       );
     }
@@ -242,6 +259,19 @@ export async function POST(request: NextRequest) {
     );
     const rentAmount = Number(((totalMinutes / 60) * Number(lot.price || 0)).toFixed(2));
     const estimatedTotal = Number((rentAmount * 1.5).toFixed(2));
+
+    try {
+      await ensureNotificationTables(pool);
+      await createNotification(pool, {
+        userId: Number(lot.owner_user_id),
+        type: 'BOOKING_CREATED',
+        title: 'New booking request',
+        message: `Booking #${insertResult.insertId} at ${lot.lot_name?.trim() || lot.location} is waiting for payment.`,
+        actionUrl: '/owner/home',
+      });
+    } catch (notificationError) {
+      console.error('Unable to create booking notification:', notificationError);
+    }
 
     return NextResponse.json({
       success: true,

@@ -6,6 +6,10 @@ import { OwnerRequestStatus, resolveAppRole } from '@/lib/roles';
 import { ensureWalletTables, getUserWalletWithTransactions } from '@/lib/wallet';
 import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
 import { ensureOwnerRequestMetadataSchema } from '@/lib/owner-request-metadata';
+import {
+  createNotification,
+  ensureNotificationTables,
+} from '@/lib/notifications';
 
 type PatchAction = 'REQUEST_OWNER' | 'APPROVE_OWNER' | 'REJECT_OWNER';
 const GENDER_OPTIONS = ['Male', 'Female', 'Other'] as const;
@@ -530,6 +534,20 @@ export async function PATCH(
       }
 
       const updatedUser = await getUserById(userId);
+
+      try {
+        await ensureNotificationTables(pool);
+        await createNotification(pool, {
+          userId,
+          type: 'OWNER_REQUEST_APPROVED',
+          title: 'Owner request approved',
+          message: 'Admin approved your owner request. Please sign out and sign in again.',
+          actionUrl: '/owner/request',
+        });
+      } catch (notificationError) {
+        console.error('Unable to create owner approval notification:', notificationError);
+      }
+
       return NextResponse.json({
         success: true,
         message: 'Owner request approved',
@@ -551,6 +569,20 @@ export async function PATCH(
     }
 
     const updatedUser = await getUserById(userId);
+
+    try {
+      await ensureNotificationTables(pool);
+      await createNotification(pool, {
+        userId,
+        type: 'OWNER_REQUEST_REJECTED',
+        title: 'Owner request rejected',
+        message: 'Admin rejected your owner request. You can edit your data and submit again.',
+        actionUrl: '/owner/request',
+      });
+    } catch (notificationError) {
+      console.error('Unable to create owner rejection notification:', notificationError);
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Owner request rejected',

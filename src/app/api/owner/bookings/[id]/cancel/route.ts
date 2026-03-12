@@ -3,6 +3,10 @@ import type { RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { ensureUserWallet, ensureWalletTables } from '@/lib/wallet';
+import {
+  createNotification,
+  ensureNotificationTables,
+} from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -214,6 +218,24 @@ export async function PATCH(
       );
 
       await connection.commit();
+
+      try {
+        await ensureNotificationTables(pool);
+        await createNotification(pool, {
+          userId: Number(booking.user_id),
+          type: 'BOOKING_CANCELLED',
+          title: 'Booking cancelled by owner',
+          message:
+            refundedAmount > 0
+              ? `Booking #${bookingId} was cancelled by owner and refunded to your wallet.`
+              : pendingPaymentNeedsAdminReview
+                ? `Booking #${bookingId} was cancelled by owner. Payment is pending admin review.`
+                : `Booking #${bookingId} was cancelled by owner.`,
+          actionUrl: `/booking-history/${bookingId}`,
+        });
+      } catch (notificationError) {
+        console.error('Unable to create owner cancellation notification:', notificationError);
+      }
 
       return NextResponse.json({
         success: true,

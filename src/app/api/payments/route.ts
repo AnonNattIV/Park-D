@@ -4,6 +4,11 @@ import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { deletePaymentProofByUrl, uploadPaymentProof } from '@/lib/storage';
 import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
+import {
+  createNotifications,
+  ensureNotificationTables,
+  listActiveAdminUserIds,
+} from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +24,9 @@ interface BookingPaymentRow extends RowDataPacket {
   checkin_datetime: Date | string | null;
   checkout_datetime: Date | string | null;
   price: number | string;
+  owner_user_id: number;
+  lot_name: string | null;
+  location: string;
   is_after_checkin: number | string;
 }
 
@@ -147,6 +155,9 @@ export async function POST(request: NextRequest) {
         b.b_status,
         b.checkin_datetime,
         b.checkout_datetime,
+        pl.owner_user_id,
+        pl.lot_name,
+        pl.location,
         pl.price,
         CASE
           WHEN b.checkin_datetime IS NOT NULL
@@ -342,6 +353,43 @@ export async function POST(request: NextRequest) {
       );
 
       await connection.commit();
+
+      try {
+        await ensureNotificationTables(pool);
+
+        const adminIds = await listActiveAdminUserIds(pool);
+        const lotName = booking.lot_name?.trim() || booking.location;
+        const adminNotifications = adminIds.map((adminUserId) => ({
+          userId: adminUserId,
+          type: 'PAYMENT_SUBMITTED',
+          title: 'New payment proof submitted',
+          message: `Booking #${bookingId} (${lotName}) is waiting for payment review.`,
+          actionUrl: '/admin',
+        }));
+
+        if (adminNotifications.length > 0) {
+          await createNotifications(pool, adminNotifications);
+        }
+
+        await createNotifications(pool, [
+          {
+            userId: requesterUserId,
+            type: 'PAYMENT_SUBMITTED',
+            title: 'Payment submitted',
+            message: `Your payment proof for booking #${bookingId} has been submitted.`,
+            actionUrl: `/booking-history/${bookingId}`,
+          },
+          {
+            userId: Number(booking.owner_user_id),
+            type: 'PAYMENT_SUBMITTED',
+            title: 'Renter submitted payment',
+            message: `Booking #${bookingId} at ${lotName} is waiting for admin review.`,
+            actionUrl: '/owner/home',
+          },
+        ]);
+      } catch (notificationError) {
+        console.error('Unable to create payment submission notifications:', notificationError);
+      }
 
       if (previousProofUrl && previousProofUrl !== uploadedProofUrl) {
         try {

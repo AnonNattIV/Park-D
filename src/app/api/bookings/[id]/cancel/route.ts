@@ -3,6 +3,10 @@ import type { RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { ensureUserWallet, ensureWalletTables } from '@/lib/wallet';
+import {
+  createNotification,
+  ensureNotificationTables,
+} from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +17,7 @@ type TokenPayload = {
 interface BookingCancelRow extends RowDataPacket {
   b_id: number;
   user_id: number;
+  owner_user_id: number;
   b_status: string;
   checkin_datetime: Date | string | null;
   pay_id: number | null;
@@ -79,6 +84,7 @@ export async function PATCH(
       `SELECT
         b.b_id,
         b.user_id,
+        pl.owner_user_id,
         b.b_status,
         b.checkin_datetime,
         p.pay_id,
@@ -98,6 +104,7 @@ export async function PATCH(
           THEN 1 ELSE 0
         END AS is_payment_grace_window
       FROM bookings b
+      INNER JOIN parking_lots pl ON pl.lot_id = b.lot_id
       LEFT JOIN payments p ON p.b_id = b.b_id
       WHERE b.b_id = ?
       LIMIT 1`,
@@ -235,6 +242,22 @@ export async function PATCH(
       );
 
       await connection.commit();
+
+      try {
+        await ensureNotificationTables(pool);
+        await createNotification(pool, {
+          userId: Number(booking.owner_user_id),
+          type: 'BOOKING_CANCELLED',
+          title: 'Booking cancelled by renter',
+          message:
+            refundedAmount > 0
+              ? `Booking #${bookingId} was cancelled and refunded.`
+              : `Booking #${bookingId} was cancelled by the renter.`,
+          actionUrl: '/owner/home',
+        });
+      } catch (notificationError) {
+        console.error('Unable to create renter cancellation notification:', notificationError);
+      }
 
       return NextResponse.json({
         success: true,

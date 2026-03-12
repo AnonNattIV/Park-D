@@ -6,6 +6,10 @@ import {
   finalizeCheckoutWithSettlement,
   runBookingCheckoutAutomation,
 } from '@/lib/booking-checkout';
+import {
+  createNotification,
+  ensureNotificationTables,
+} from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +23,7 @@ type CheckoutReviewAction = 'APPROVE' | 'DENY';
 interface OwnerCheckoutReviewRow extends RowDataPacket {
   b_id: number;
   b_status: string;
+  user_id: number;
   owner_user_id: number;
   checkin_proof: string | null;
   checkout_datetime: Date | string | null;
@@ -111,6 +116,7 @@ export async function PATCH(
         `SELECT
           b.b_id,
           b.b_status,
+          b.user_id,
           pl.owner_user_id,
           b.checkin_proof,
           b.checkout_datetime,
@@ -176,6 +182,20 @@ export async function PATCH(
         );
 
         await connection.commit();
+
+        try {
+          await ensureNotificationTables(pool);
+          await createNotification(pool, {
+            userId: Number(booking.user_id),
+            type: 'CHECKOUT_DENIED',
+            title: 'Checkout denied',
+            message: `Owner denied checkout proof for booking #${bookingId}.`,
+            actionUrl: `/booking-history/${bookingId}`,
+          });
+        } catch (notificationError) {
+          console.error('Unable to create checkout denied notification:', notificationError);
+        }
+
         return NextResponse.json({
           success: true,
           message: settlement.didSettle
@@ -215,6 +235,19 @@ export async function PATCH(
       );
 
       await connection.commit();
+
+      try {
+        await ensureNotificationTables(pool);
+        await createNotification(pool, {
+          userId: Number(booking.user_id),
+          type: 'CHECKOUT_APPROVED',
+          title: 'Checkout approved',
+          message: `Owner approved checkout for booking #${bookingId}.`,
+          actionUrl: `/booking-history/${bookingId}`,
+        });
+      } catch (notificationError) {
+        console.error('Unable to create checkout approved notification:', notificationError);
+      }
 
       return NextResponse.json({
         success: true,
