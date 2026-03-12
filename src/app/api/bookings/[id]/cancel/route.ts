@@ -3,6 +3,10 @@ import type { RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { ensureUserWallet, ensureWalletTables } from '@/lib/wallet';
+import {
+  createNotification,
+  ensureNotificationTables,
+} from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,12 +17,15 @@ type TokenPayload = {
 interface BookingCancelRow extends RowDataPacket {
   b_id: number;
   user_id: number;
+  owner_user_id: number;
   b_status: string;
   checkin_datetime: Date | string | null;
   pay_id: number | null;
   pay_status: string | null;
   pay_amount: number | string | null;
+  paid_at: Date | string | null;
   is_before_checkin: number | string;
+  is_payment_grace_window: number | string;
 }
 
 interface WalletLockRow extends RowDataPacket {
@@ -77,17 +84,27 @@ export async function PATCH(
       `SELECT
         b.b_id,
         b.user_id,
+        pl.owner_user_id,
         b.b_status,
         b.checkin_datetime,
         p.pay_id,
         p.pay_status,
         p.pay_amount,
+        p.paid_at,
         CASE
           WHEN b.checkin_datetime IS NOT NULL
            AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') <= DATE_SUB(b.checkin_datetime, INTERVAL 1 DAY)
           THEN 1 ELSE 0
-        END AS is_before_checkin
+        END AS is_before_checkin,
+        CASE
+          WHEN p.pay_status = 'PAID'
+           AND p.paid_at IS NOT NULL
+           AND b.checkin_proof IS NULL
+           AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') <= DATE_ADD(p.paid_at, INTERVAL 10 MINUTE)
+          THEN 1 ELSE 0
+        END AS is_payment_grace_window
       FROM bookings b
+      INNER JOIN parking_lots pl ON pl.lot_id = b.lot_id
       LEFT JOIN payments p ON p.b_id = b.b_id
       WHERE b.b_id = ?
       LIMIT 1`,
@@ -114,9 +131,20 @@ export async function PATCH(
       );
     }
 
-    if (Number(booking.is_before_checkin) !== 1) {
+    const canCancelBeforeReservation = Number(booking.is_before_checkin) === 1;
+    const canCancelInPaymentGraceWindow = Number(booking.is_payment_grace_window) === 1;
+    const canCancelBeforePaymentConfirmation = booking.b_status === 'WAITING_FOR_PAYMENT';
+
+    if (
+      !canCancelBeforePaymentConfirmation &&
+      !canCancelBeforeReservation &&
+      !canCancelInPaymentGraceWindow
+    ) {
       return NextResponse.json(
-        { error: 'Booking can be cancelled only at least 1 day before reservation time' },
+        {
+          error:
+            'Booking can be cancelled anytime before payment confirmation, or at least 1 day before reservation time, or within 10 minutes after payment success',
+        },
         { status: 409 }
       );
     }
@@ -189,7 +217,9 @@ export async function PATCH(
             refundedAmount,
             balanceBefore,
             walletBalanceAfter,
-            'Renter cancelled booking at least 1 day before reservation. Auto refund.',
+            canCancelInPaymentGraceWindow
+              ? 'Renter cancelled booking within 10 minutes after payment success. Auto refund.'
+              : 'Renter cancelled booking at least 1 day before reservation. Auto refund.',
           ]
         );
 
@@ -212,6 +242,22 @@ export async function PATCH(
       );
 
       await connection.commit();
+
+      try {
+        await ensureNotificationTables(pool);
+        await createNotification(pool, {
+          userId: Number(booking.owner_user_id),
+          type: 'BOOKING_CANCELLED',
+          title: 'Booking cancelled by renter',
+          message:
+            refundedAmount > 0
+              ? `Booking #${bookingId} was cancelled and refunded.`
+              : `Booking #${bookingId} was cancelled by the renter.`,
+          actionUrl: '/owner/home',
+        });
+      } catch (notificationError) {
+        console.error('Unable to create renter cancellation notification:', notificationError);
+      }
 
       return NextResponse.json({
         success: true,

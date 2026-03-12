@@ -5,6 +5,11 @@ import { verifyToken } from '@/lib/auth';
 import { OwnerRequestStatus, resolveAppRole } from '@/lib/roles';
 import { ensureWalletTables, getUserWalletWithTransactions } from '@/lib/wallet';
 import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
+import { ensureOwnerRequestMetadataSchema } from '@/lib/owner-request-metadata';
+import {
+  createNotification,
+  ensureNotificationTables,
+} from '@/lib/notifications';
 
 type PatchAction = 'REQUEST_OWNER' | 'APPROVE_OWNER' | 'REJECT_OWNER';
 const GENDER_OPTIONS = ['Male', 'Female', 'Other'] as const;
@@ -33,6 +38,10 @@ interface UserRow extends RowDataPacket {
 
 interface OwnerRoleRow extends RowDataPacket {
   user_id: number;
+}
+
+interface OwnerRequestMetadataRow extends RowDataPacket {
+  citizen_id: string | null;
 }
 
 interface BookingHistoryRow extends RowDataPacket {
@@ -455,14 +464,37 @@ export async function PATCH(
     }
 
     if (action === 'APPROVE_OWNER') {
-      const citizenId = typeof body?.citizenId === 'string' ? body.citizenId.trim() : '';
-      if (!citizenId) {
-        return NextResponse.json({ error: 'citizenId is required to approve owner role' }, { status: 400 });
-      }
+      await ensureOwnerRequestMetadataSchema();
 
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
+
+        const [metadataRows] = await connection.query<OwnerRequestMetadataRow[]>(
+          `SELECT citizen_id
+          FROM owner_request_metadata
+          WHERE user_id = ?
+          LIMIT 1
+          FOR UPDATE`,
+          [userId]
+        );
+
+        const citizenId = metadataRows[0]?.citizen_id?.trim() || '';
+        if (!citizenId) {
+          await connection.rollback();
+          return NextResponse.json(
+            { error: 'Citizen ID from owner request form is required before approval' },
+            { status: 400 }
+          );
+        }
+
+        if (!/^\d+$/.test(citizenId)) {
+          await connection.rollback();
+          return NextResponse.json(
+            { error: 'Citizen ID from owner request form must contain numbers only' },
+            { status: 400 }
+          );
+        }
 
         const [updateResult] = await connection.query<ResultSetHeader>(
           `UPDATE users
@@ -502,6 +534,20 @@ export async function PATCH(
       }
 
       const updatedUser = await getUserById(userId);
+
+      try {
+        await ensureNotificationTables(pool);
+        await createNotification(pool, {
+          userId,
+          type: 'OWNER_REQUEST_APPROVED',
+          title: 'Owner request approved',
+          message: 'Admin approved your owner request. Please sign out and sign in again.',
+          actionUrl: '/owner/request',
+        });
+      } catch (notificationError) {
+        console.error('Unable to create owner approval notification:', notificationError);
+      }
+
       return NextResponse.json({
         success: true,
         message: 'Owner request approved',
@@ -523,6 +569,20 @@ export async function PATCH(
     }
 
     const updatedUser = await getUserById(userId);
+
+    try {
+      await ensureNotificationTables(pool);
+      await createNotification(pool, {
+        userId,
+        type: 'OWNER_REQUEST_REJECTED',
+        title: 'Owner request rejected',
+        message: 'Admin rejected your owner request. You can edit your data and submit again.',
+        actionUrl: '/owner/request',
+      });
+    } catch (notificationError) {
+      console.error('Unable to create owner rejection notification:', notificationError);
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Owner request rejected',

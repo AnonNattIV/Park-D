@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Image from 'next/image';
 import Tabbar from '@/components/Tabbar';
 import { Star } from 'lucide-react';
 import { clearStoredAuth, readStoredAuthUser, readStoredToken } from '@/lib/auth-client';
@@ -31,6 +32,7 @@ type BookingDetailResponse = {
       isCheckoutWindow: boolean;
       hasCheckinProof: boolean;
       canCancelBeforeReservation: boolean;
+      canCancelAfterPaymentSuccess: boolean;
     };
     payment: {
       id: number;
@@ -265,7 +267,8 @@ export default function BookingHistoryDetailPage() {
       return false;
     }
 
-    return booking.status.toUpperCase() === 'CHECKING_OUT';
+    const status = booking.status.toUpperCase();
+    return status === 'CHECKING_OUT' || status === 'CHECKOUT_REJECTED';
   }, [booking]);
 
   const canCancelBooking = useMemo(() => {
@@ -278,7 +281,14 @@ export default function BookingHistoryDetailPage() {
       return false;
     }
 
-    return booking.timeFlags.canCancelBeforeReservation;
+    if (status === 'WAITING_FOR_PAYMENT') {
+      return true;
+    }
+
+    return (
+      booking.timeFlags.canCancelBeforeReservation ||
+      booking.timeFlags.canCancelAfterPaymentSuccess
+    );
   }, [booking]);
 
   const isFinalizedBooking = useMemo(() => {
@@ -649,6 +659,18 @@ export default function BookingHistoryDetailPage() {
               <p className="mt-1 text-xs text-blue-700">
                 Submit payment proof within 10 minutes after reservation. If not submitted, booking is auto-cancelled.
               </p>
+              <div className="mt-3 rounded-xl border border-blue-100 bg-white p-3">
+                <p className="text-xs font-semibold text-blue-800">QR Code</p>
+                <div className="mt-2 flex justify-center">
+                  <Image
+                    src="/image/qrcode.png"
+                    alt="Payment QR Code"
+                    width={220}
+                    height={220}
+                    className="rounded-lg border border-slate-200"
+                  />
+                </div>
+              </div>
               {isPaymentUnderReview ? (
                 <p className="mt-3 rounded-lg bg-white px-3 py-2 text-sm text-blue-700">
                   Payment proof is under progress of checking by admin.
@@ -679,7 +701,8 @@ export default function BookingHistoryDetailPage() {
           {canCancelBooking ? (
             <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 p-4">
               <p className="text-sm text-rose-700">
-                You can cancel only at least 1 day before reservation time.
+                You can cancel anytime before payment confirmation, or at least 1 day before
+                reservation time, or within 10 minutes after payment success.
               </p>
               <button
                 type="button"

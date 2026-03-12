@@ -36,6 +36,7 @@ interface BookingDetailRow extends RowDataPacket {
   is_checkout_window: number | string;
   has_checkin_proof: number | string;
   is_cancel_window: number | string;
+  is_payment_grace_cancel_window: number | string;
 }
 
 function parseBookingId(rawId: string): number | null {
@@ -145,7 +146,15 @@ export async function GET(
            AND b.checkin_proof IS NULL
            AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') <= DATE_SUB(b.checkin_datetime, INTERVAL 1 DAY)
           THEN 1 ELSE 0
-        END AS is_cancel_window
+        END AS is_cancel_window,
+        CASE
+          WHEN b.b_status NOT IN ('CANCELLED', 'CHECKOUT_APPROVED')
+           AND b.checkin_proof IS NULL
+           AND p.pay_status = 'PAID'
+           AND p.paid_at IS NOT NULL
+           AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+07:00') <= DATE_ADD(p.paid_at, INTERVAL 10 MINUTE)
+          THEN 1 ELSE 0
+        END AS is_payment_grace_cancel_window
       FROM bookings b
       INNER JOIN parking_lots pl ON pl.lot_id = b.lot_id
       LEFT JOIN payments p ON p.b_id = b.b_id
@@ -209,6 +218,7 @@ export async function GET(
           isCheckoutWindow: Number(row.is_checkout_window) === 1,
           hasCheckinProof: Number(row.has_checkin_proof) === 1,
           canCancelBeforeReservation: Number(row.is_cancel_window) === 1,
+          canCancelAfterPaymentSuccess: Number(row.is_payment_grace_cancel_window) === 1,
         },
         payment: row.pay_id
           ? {

@@ -45,6 +45,7 @@ interface OwnerRequestItem {
   fullName: string;
   email: string;
   citizenId: string | null;
+  evidenceUrl?: string | null;
   submittedAt: string;
   status: OwnerRequestStatus;
 }
@@ -188,7 +189,6 @@ export default function AdminHomePage() {
   const [ownerActionError, setOwnerActionError] = useState('');
   const [ownerActionMessage, setOwnerActionMessage] = useState('');
   const [processingOwnerUserId, setProcessingOwnerUserId] = useState<number | null>(null);
-  const [citizenIdByUser, setCitizenIdByUser] = useState<Record<number, string>>({});
 
   const [parkingRequests, setParkingRequests] = useState<ParkingLotRequestItem[]>([]);
   const [isParkingLoading, setIsParkingLoading] = useState(true);
@@ -258,17 +258,7 @@ export default function AdminHomePage() {
         throw new Error(result.error || 'Unable to load owner requests');
       }
 
-      const nextRequests = result.requests || [];
-      setOwnerRequests(nextRequests);
-      setCitizenIdByUser((prev) => {
-        const nextMap: Record<number, string> = { ...prev };
-        nextRequests.forEach((item) => {
-          if (item.citizenId && !nextMap[item.userId]) {
-            nextMap[item.userId] = item.citizenId;
-          }
-        });
-        return nextMap;
-      });
+      setOwnerRequests(result.requests || []);
     } catch (error) {
       console.error('Unable to load owner requests:', error);
       setOwnerLoadError(error instanceof Error ? error.message : 'Unable to load owner requests right now.');
@@ -413,13 +403,6 @@ export default function AdminHomePage() {
     router.replace('/login');
   };
 
-  const handleCitizenIdChange = (userId: number, value: string) => {
-    setCitizenIdByUser((prev) => ({
-      ...prev,
-      [userId]: value,
-    }));
-  };
-
   const handleOwnerRequestAction = async (item: OwnerRequestItem, action: OwnerRequestAction) => {
     if (!token || item.status !== 'PENDING') {
       return;
@@ -428,10 +411,15 @@ export default function AdminHomePage() {
     setOwnerActionError('');
     setOwnerActionMessage('');
 
-    const citizenIdInput = citizenIdByUser[item.userId]?.trim() || item.citizenId || '';
+    const citizenIdInput = item.citizenId?.trim() || '';
 
     if (action === 'APPROVE_OWNER' && !citizenIdInput) {
       setOwnerActionError(`Citizen ID is required to approve user ${item.username}.`);
+      return;
+    }
+
+    if (action === 'APPROVE_OWNER' && !/^\d+$/.test(citizenIdInput)) {
+      setOwnerActionError(`Citizen ID must contain numbers only for user ${item.username}.`);
       return;
     }
 
@@ -446,7 +434,7 @@ export default function AdminHomePage() {
         },
         body: JSON.stringify(
           action === 'APPROVE_OWNER'
-            ? { action, citizenId: citizenIdInput }
+            ? { action }
             : { action }
         ),
       });
@@ -472,21 +460,11 @@ export default function AdminHomePage() {
             ? {
                 ...requestItem,
                 status: nextStatus || fallbackStatus,
-                citizenId:
-                  action === 'APPROVE_OWNER'
-                    ? citizenIdInput
-                    : requestItem.citizenId,
+                citizenId: requestItem.citizenId,
               }
             : requestItem
         )
       );
-
-      if (action === 'APPROVE_OWNER') {
-        setCitizenIdByUser((prev) => ({
-          ...prev,
-          [item.userId]: citizenIdInput,
-        }));
-      }
 
       setOwnerActionMessage(result.message || 'Owner request updated successfully.');
     } catch (error) {
@@ -798,6 +776,18 @@ export default function AdminHomePage() {
                           <p className="text-sm text-slate-500">Email: {item.email}</p>
                           <p className="text-sm text-slate-500">User ID: {item.userId}</p>
                           <p className="text-sm text-slate-500">Submitted: {formatSubmittedAt(item.submittedAt)}</p>
+                          {item.evidenceUrl ? (
+                            <a
+                              href={item.evidenceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                            >
+                              Open Citizen ID Evidence
+                            </a>
+                          ) : (
+                            <p className="text-xs text-rose-600">No evidence file.</p>
+                          )}
                         </div>
 
                         <div className="min-w-[300px] space-y-2">
@@ -809,10 +799,11 @@ export default function AdminHomePage() {
 
                           <input
                             type="text"
-                            value={citizenIdByUser[item.userId] ?? item.citizenId ?? ''}
-                            onChange={(event) => handleCitizenIdChange(item.userId, event.target.value)}
+                            value={item.citizenId || '-'}
                             placeholder="Citizen ID"
-                            disabled={!isPending || isProcessing}
+                            disabled
+                            inputMode="numeric"
+                            pattern="[0-9]*"
                             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100"
                           />
 

@@ -44,6 +44,11 @@ type BookingCreateResponse = {
 };
 
 type DurationUnit = 'HOUR' | 'DAY' | 'MONTH';
+const MIN_CHECKIN_LEAD_TIME_MS = 10 * 60 * 1000;
+
+function getCurrentMinuteEpoch(): number {
+  return Math.floor(Date.now() / 60000) * 60000;
+}
 
 function formatPrice(value: number): string {
   if (!Number.isFinite(value)) {
@@ -93,9 +98,9 @@ export default function BookingPage() {
     setToken(storedToken);
     setIsReady(true);
 
-    const now = new Date();
-    setMinimumDateTime(formatBangkokDateTimeLocalInput(now));
-    setCheckinDatetime(formatBangkokDateTimeLocalInput(now));
+    const minimumCheckinEpoch = getCurrentMinuteEpoch() + MIN_CHECKIN_LEAD_TIME_MS;
+    setMinimumDateTime(formatBangkokDateTimeLocalInput(minimumCheckinEpoch));
+    setCheckinDatetime(formatBangkokDateTimeLocalInput(minimumCheckinEpoch));
   }, [router]);
 
   useEffect(() => {
@@ -233,6 +238,12 @@ export default function BookingPage() {
 
     if (checkout.comparableTime <= checkin.comparableTime) {
       setSubmitError('Check-out must be later than check-in');
+      return;
+    }
+
+    const minimumCheckinEpoch = getCurrentMinuteEpoch() + MIN_CHECKIN_LEAD_TIME_MS;
+    if (checkin.comparableTime < minimumCheckinEpoch) {
+      setSubmitError('Check-in time must be at least 10 minutes from now');
       return;
     }
 

@@ -3,6 +3,10 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
+import {
+  createNotification,
+  ensureNotificationTables,
+} from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +17,7 @@ type TokenPayload = {
 interface BookingCheckoutRow extends RowDataPacket {
   b_id: number;
   user_id: number;
+  owner_user_id: number;
   b_status: string;
   checkin_datetime: Date | string | null;
   checkin_proof: string | null;
@@ -73,14 +78,16 @@ export async function PATCH(
     const pool = getPool();
     const [rows] = await pool.query<BookingCheckoutRow[]>(
       `SELECT
-        b_id,
-        user_id,
-        b_status,
-        checkin_datetime,
-        checkin_proof,
-        checkout_datetime
-      FROM bookings
-      WHERE b_id = ?
+        b.b_id,
+        b.user_id,
+        pl.owner_user_id,
+        b.b_status,
+        b.checkin_datetime,
+        b.checkin_proof,
+        b.checkout_datetime
+      FROM bookings b
+      INNER JOIN parking_lots pl ON pl.lot_id = b.lot_id
+      WHERE b.b_id = ?
       LIMIT 1`,
       [bookingId]
     );
@@ -136,6 +143,19 @@ export async function PATCH(
       );
     }
 
+    try {
+      await ensureNotificationTables(pool);
+      await createNotification(pool, {
+        userId: Number(booking.owner_user_id),
+        type: 'CHECKOUT_REQUESTED',
+        title: 'Checkout request received',
+        message: `Renter submitted checkout request for booking #${bookingId}.`,
+        actionUrl: '/owner/home',
+      });
+    } catch (notificationError) {
+      console.error('Unable to create checkout request notification:', notificationError);
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Checkout request sent to owner',
@@ -171,14 +191,16 @@ export async function DELETE(
     const pool = getPool();
     const [rows] = await pool.query<BookingCheckoutRow[]>(
       `SELECT
-        b_id,
-        user_id,
-        b_status,
-        checkin_datetime,
-        checkin_proof,
-        checkout_datetime
-      FROM bookings
-      WHERE b_id = ?
+        b.b_id,
+        b.user_id,
+        pl.owner_user_id,
+        b.b_status,
+        b.checkin_datetime,
+        b.checkin_proof,
+        b.checkout_datetime
+      FROM bookings b
+      INNER JOIN parking_lots pl ON pl.lot_id = b.lot_id
+      WHERE b.b_id = ?
       LIMIT 1`,
       [bookingId]
     );
@@ -192,7 +214,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    if (booking.b_status !== 'CHECKING_OUT') {
+    if (booking.b_status !== 'CHECKING_OUT' && booking.b_status !== 'CHECKOUT_REJECTED') {
       return NextResponse.json(
         { error: 'This booking has no checkout request to cancel' },
         { status: 409 }
@@ -205,7 +227,7 @@ export async function DELETE(
           updated_at = NOW()
       WHERE b_id = ?
         AND user_id = ?
-        AND b_status = 'CHECKING_OUT'`,
+        AND b_status IN ('CHECKING_OUT', 'CHECKOUT_REJECTED')`,
       [bookingId, requesterUserId]
     );
 
@@ -214,6 +236,19 @@ export async function DELETE(
         { error: 'Unable to cancel checkout request right now' },
         { status: 409 }
       );
+    }
+
+    try {
+      await ensureNotificationTables(pool);
+      await createNotification(pool, {
+        userId: Number(booking.owner_user_id),
+        type: 'CHECKOUT_CANCELLED',
+        title: 'Checkout request cancelled',
+        message: `Renter cancelled checkout request for booking #${bookingId}.`,
+        actionUrl: '/owner/home',
+      });
+    } catch (notificationError) {
+      console.error('Unable to create checkout cancellation notification:', notificationError);
     }
 
     return NextResponse.json({

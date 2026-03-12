@@ -3,6 +3,10 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { ensureUserWallet, ensureWalletTables } from '@/lib/wallet';
+import {
+  createNotifications,
+  ensureNotificationTables,
+} from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -233,6 +237,45 @@ export async function PATCH(
       );
 
       await connection.commit();
+
+      try {
+        await ensureNotificationTables(pool);
+
+        const renterMessage =
+          action === 'APPROVE'
+            ? bookingAlreadyCancelled
+              ? 'Payment approved after cancellation. Refund was sent to your wallet.'
+              : 'Payment approved. Your booking is confirmed.'
+            : bookingAlreadyCancelled
+              ? 'Payment denied. Booking remains cancelled.'
+              : 'Payment denied. Booking has been cancelled.';
+
+        const ownerMessage =
+          action === 'APPROVE'
+            ? bookingAlreadyCancelled
+              ? 'Payment was approved after owner cancellation and refunded to renter.'
+              : 'Payment approved. Booking is now confirmed.'
+            : 'Payment was denied by admin.';
+
+        await createNotifications(pool, [
+          {
+            userId: Number(payment.user_id),
+            type: 'PAYMENT_REVIEWED',
+            title: action === 'APPROVE' ? 'Payment approved' : 'Payment denied',
+            message: renterMessage,
+            actionUrl: `/booking-history/${payment.b_id}`,
+          },
+          {
+            userId: Number(payment.owner_user_id),
+            type: 'PAYMENT_REVIEWED',
+            title: action === 'APPROVE' ? 'Booking payment approved' : 'Booking payment denied',
+            message: ownerMessage,
+            actionUrl: '/owner/home',
+          },
+        ]);
+      } catch (notificationError) {
+        console.error('Unable to create payment review notifications:', notificationError);
+      }
 
       return NextResponse.json({
         success: true,
