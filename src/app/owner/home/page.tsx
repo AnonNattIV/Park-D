@@ -266,6 +266,16 @@ export default function OwnerPage() {
   }, [authUser?.id, isReady, router, token]);
 
   useEffect(() => {
+    if (!isReady) {
+      return;
+    }
+
+    if (!canManageOwnerView) {
+      router.replace('/owner/request');
+    }
+  }, [canManageOwnerView, isReady, router]);
+
+  useEffect(() => {
     if (!isReady || !token) {
       return;
     }

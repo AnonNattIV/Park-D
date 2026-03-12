@@ -21,7 +21,7 @@ const tabs: { id: TabType; label: string; href: string; icon: React.ReactNode }[
   {
     id: 'owner',
     label: 'Owner',
-    href: '/owner/home',
+    href: '/owner',
     icon: <BuildingOffice2Icon className="w-6 h-6" />,
   },
   {

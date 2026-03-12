@@ -315,7 +315,7 @@ If payment exists and not already refunded/failed:
 - payment status -> `REFUNDED`
 - booking -> `CANCELLED`
 
-## 8.2 Owner/admin cancel booking
+## 8.2 Owner
 
 File:
 

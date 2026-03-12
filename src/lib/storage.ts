@@ -265,6 +265,44 @@ export async function getParkingLotEvidenceByKey(objectKey: string): Promise<{
   return getObjectByKey(objectKey);
 }
 
+export function buildOwnerRequestEvidenceUrl(objectKey: string): string {
+  return buildObjectProxyUrl('/api/owner-request-evidence', objectKey);
+}
+
+export function extractOwnerRequestEvidenceKey(
+  fileUrl: string | null | undefined
+): string | null {
+  return extractObjectKeyByPrefix(fileUrl, '/api/owner-request-evidence/');
+}
+
+export async function uploadOwnerRequestEvidence(
+  file: File,
+  userId: number
+): Promise<string> {
+  const contentType = file.type || 'application/octet-stream';
+  const extension = getFileExtension(file.name, contentType);
+  const objectKey = `owner-request-evidence/${userId}/${Date.now()}-${sanitizeFilename(
+    file.name || `evidence.${extension}`
+  )}`;
+
+  await uploadObjectByKey(file, objectKey);
+  return buildOwnerRequestEvidenceUrl(objectKey);
+}
+
+export async function deleteOwnerRequestEvidenceByUrl(
+  fileUrl: string | null | undefined
+): Promise<void> {
+  const objectKey = extractOwnerRequestEvidenceKey(fileUrl);
+  await deleteObjectByKey(objectKey);
+}
+
+export async function getOwnerRequestEvidenceByKey(objectKey: string): Promise<{
+  body: Uint8Array;
+  contentType: string;
+}> {
+  return getObjectByKey(objectKey);
+}
+
 export function buildPaymentProofUrl(objectKey: string): string {
   return buildObjectProxyUrl('/api/payment-proof', objectKey);
 }
