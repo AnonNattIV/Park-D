@@ -7,7 +7,7 @@ import {
   runBookingCheckoutAutomation,
 } from '@/lib/booking-checkout';
 import {
-  createNotification,
+  createNotificationWithDelivery,
   ensureNotificationTables,
 } from '@/lib/notifications';
 
@@ -185,12 +185,14 @@ export async function PATCH(
 
         try {
           await ensureNotificationTables(pool);
-          await createNotification(pool, {
+          await createNotificationWithDelivery(pool, {
             userId: Number(booking.user_id),
             type: 'CHECKOUT_DENIED',
             title: 'Checkout denied',
             message: `Owner denied checkout proof for booking #${bookingId}.`,
             actionUrl: `/booking-history/${bookingId}`,
+            sendEmail: true,
+            emailSubject: 'Park:D checkout denied',
           });
         } catch (notificationError) {
           console.error('Unable to create checkout denied notification:', notificationError);
@@ -238,12 +240,14 @@ export async function PATCH(
 
       try {
         await ensureNotificationTables(pool);
-        await createNotification(pool, {
+        await createNotificationWithDelivery(pool, {
           userId: Number(booking.user_id),
           type: 'CHECKOUT_APPROVED',
           title: 'Checkout approved',
           message: `Owner approved checkout for booking #${bookingId}.`,
           actionUrl: `/booking-history/${bookingId}`,
+          sendEmail: true,
+          emailSubject: 'Park:D checkout approved',
         });
       } catch (notificationError) {
         console.error('Unable to create checkout approved notification:', notificationError);

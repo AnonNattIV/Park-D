@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2';
 import getPool from '@/lib/db/mysql';
 import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
 import { ensureParkingLotMetadataSchema } from '@/lib/parking-lot-metadata';
+import { buildGoogleMapsEmbedUrl } from '@/lib/google-maps';
 
 interface ParkingLotDetailRow extends RowDataPacket {
   lot_id: number;
@@ -82,24 +83,7 @@ function buildMapEmbedUrl(
   latitude: number | null,
   longitude: number | null
 ): string | null {
-  if (latitude === null || longitude === null) {
-    return null;
-  }
-
-  const bbox = [
-    longitude - 0.0045,
-    latitude - 0.0045,
-    longitude + 0.0045,
-    latitude + 0.0045,
-  ]
-    .map((value) => value.toFixed(6))
-    .join(',');
-
-  const marker = `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
-
-  return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(
-    bbox
-  )}&layer=mapnik&marker=${encodeURIComponent(marker)}`;
+  return buildGoogleMapsEmbedUrl(latitude, longitude);
 }
 
 function parseStringArrayValue(value: unknown): string[] {

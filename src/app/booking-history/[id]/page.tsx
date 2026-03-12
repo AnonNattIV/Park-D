@@ -7,6 +7,7 @@ import Image from 'next/image';
 import Tabbar from '@/components/Tabbar';
 import { Star } from 'lucide-react';
 import { clearStoredAuth, readStoredAuthUser, readStoredToken } from '@/lib/auth-client';
+import { buildGoogleMapsOpenUrl } from '@/lib/google-maps';
 
 type BookingDetailResponse = {
   success?: boolean;
@@ -17,6 +18,9 @@ type BookingDetailResponse = {
       id: number;
       name: string;
       location: string;
+      latitude: number | null;
+      longitude: number | null;
+      mapEmbedUrl: string | null;
       price: number;
     };
     plateId: string;
@@ -129,11 +133,6 @@ export default function BookingHistoryDetailPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkinProofFile, setCheckinProofFile] = useState<File | null>(null);
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
-  const isApprovedAndCheckedOut = useMemo(() => {
-    if (!booking) return false;
-    // อนุญาตให้รีวิวได้เมื่อ Owner กดยืนยันแล้ว
-    return ['CHECKOUT_APPROVED', 'COMPLETED'].includes(booking.status.toUpperCase());
-  }, [booking]);
 
   useEffect(() => {
     const storedToken = readStoredToken();
@@ -566,6 +565,8 @@ export default function BookingHistoryDetailPage() {
     );
   }
 
+  const mapOpenUrl = buildGoogleMapsOpenUrl(booking.lot.latitude, booking.lot.longitude);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Tabbar />
@@ -613,6 +614,52 @@ export default function BookingHistoryDetailPage() {
                 {booking.estimatedRent === null ? '-' : `${formatMoney(booking.estimatedRent)} THB`}
               </p>
             </div>
+          </div>
+
+          <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-sm font-semibold text-slate-800">Parking Location</p>
+            <div className="mt-3 relative h-64 overflow-hidden rounded-xl bg-slate-100">
+              {booking.lot.mapEmbedUrl ? (
+                mapOpenUrl ? (
+                  <a
+                    href={mapOpenUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block h-full w-full cursor-pointer"
+                    aria-label={`Open ${booking.lot.name} location on Google Maps`}
+                  >
+                    <iframe
+                      title={`Location of ${booking.lot.name}`}
+                      src={booking.lot.mapEmbedUrl}
+                      className="pointer-events-none h-full w-full border-0"
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                    />
+                  </a>
+                ) : (
+                  <iframe
+                    title={`Location of ${booking.lot.name}`}
+                    src={booking.lot.mapEmbedUrl}
+                    className="h-full w-full border-0"
+                    loading="lazy"
+                    referrerPolicy="no-referrer-when-downgrade"
+                  />
+                )
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                  Map unavailable
+                </div>
+              )}
+            </div>
+            {mapOpenUrl ? (
+              <p className="mt-2 text-xs text-blue-600">Tap map to open in Google Maps.</p>
+            ) : null}
+            <p className="mt-2 text-sm text-slate-600">{booking.lot.location}</p>
+            {booking.lot.latitude !== null && booking.lot.longitude !== null ? (
+              <p className="mt-1 text-xs text-slate-500">
+                Coordinates: {booking.lot.latitude.toFixed(6)}, {booking.lot.longitude.toFixed(6)}
+              </p>
+            ) : null}
           </div>
 
           {booking.payment?.proofUrl ? (
@@ -788,43 +835,48 @@ export default function BookingHistoryDetailPage() {
           ) : null}
 
           {booking.review ? (
-            <div className="mt-8 pt-6 border-t border-slate-200">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-bold text-slate-800">รีวิวของคุณ</h3>
+            <div className="mt-8 border-t border-slate-200 pt-6">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-lg font-bold text-slate-800">Your Review</h3>
               </div>
-              
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-sm">
-                <div className="flex mb-2 gap-1">
+
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 shadow-sm">
+                <div className="mb-2 flex gap-1">
                   {[1, 2, 3, 4, 5].map((star) => (
                     <Star
                       key={star}
                       size={20}
-                      className={star <= booking.review!.score ? "fill-yellow-500 text-yellow-500" : "text-gray-200"}
+                      className={
+                        star <= booking.review!.score
+                          ? 'fill-yellow-500 text-yellow-500'
+                          : 'text-gray-200'
+                      }
                     />
                   ))}
                 </div>
-                <p className="text-sm text-slate-700 mt-2">
-                  {booking.review.comment || <span className="text-slate-400 italic">ไม่มีความคิดเห็น</span>}
+                <p className="mt-2 text-sm text-slate-700">
+                  {booking.review.comment || (
+                    <span className="italic text-slate-400">No comment</span>
+                  )}
                 </p>
               </div>
 
-              {/* แสดงปุ่มแก้ไขรีวิวเสมอ */}
               <Link href={`/review/${booking.id}`}>
-                <button className="w-full mt-4 flex items-center justify-center gap-2 py-3 border-2 border-yellow-500 text-yellow-600 font-bold rounded-xl hover:bg-yellow-50 transition-colors">
-                  แก้ไขรีวิว
+                <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border-2 border-yellow-500 py-3 font-bold text-yellow-600 transition-colors hover:bg-yellow-50">
+                  Edit Review
                 </button>
               </Link>
             </div>
           ) : ['CHECKOUT_APPROVED', 'COMPLETED'].includes(booking.status.toUpperCase()) ? (
-            <div className="mt-8 pt-6 border-t border-slate-200">
-              <h3 className="text-lg font-bold text-slate-800 mb-3 text-center">การใช้งานเสร็จสิ้น</h3>
-              <p className="text-sm text-slate-500 mb-4 text-center">
-                กรุณาให้คะแนนเพื่อเป็นประโยชน์ต่อผู้ใช้งานท่านอื่น
+            <div className="mt-8 border-t border-slate-200 pt-6">
+              <h3 className="mb-3 text-center text-lg font-bold text-slate-800">Booking Completed</h3>
+              <p className="mb-4 text-center text-sm text-slate-500">
+                Please rate this parking lot to help other users.
               </p>
               <Link href={`/review/${booking.id}`}>
-                <button className="w-full flex items-center justify-center gap-2 py-3 bg-yellow-500 text-white font-bold rounded-xl hover:bg-yellow-600 transition-colors shadow-md">
+                <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-yellow-500 py-3 font-bold text-white shadow-md transition-colors hover:bg-yellow-600">
                   <Star size={20} className="fill-white" />
-                  ให้คะแนน / รีวิวสถานที่
+                  Rate / Review Parking
                 </button>
               </Link>
             </div>
@@ -834,3 +886,4 @@ export default function BookingHistoryDetailPage() {
     </div>
   );
 }
+

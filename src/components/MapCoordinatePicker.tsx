@@ -1,147 +1,241 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import 'leaflet/dist/leaflet.css';
+import { useEffect, useRef, useState } from 'react';
 
 interface MapCoordinatePickerProps {
   latitude: number | null;
   longitude: number | null;
   onChange: (latitude: number, longitude: number) => void;
   isPinLocked?: boolean;
+  showZoomControls?: boolean;
 }
 
 const DEFAULT_CENTER: [number, number] = [13.7563, 100.5018];
 const DEFAULT_ZOOM = 6;
 const PIN_ZOOM = 17;
+const GOOGLE_MAPS_SCRIPT_ID = 'parkd-google-maps-script';
+
+declare global {
+  interface Window {
+    google?: any;
+    __parkdGoogleMapsPromise?: Promise<void>;
+  }
+}
+
+function loadGoogleMapsApi(apiKey: string): Promise<void> {
+  if (typeof window === 'undefined') {
+    return Promise.reject(new Error('Google Maps can only load in browser'));
+  }
+
+  if (window.google?.maps) {
+    return Promise.resolve();
+  }
+
+  if (window.__parkdGoogleMapsPromise) {
+    return window.__parkdGoogleMapsPromise;
+  }
+
+  window.__parkdGoogleMapsPromise = new Promise<void>((resolve, reject) => {
+    const existingScript = document.getElementById(GOOGLE_MAPS_SCRIPT_ID) as HTMLScriptElement | null;
+    if (existingScript) {
+      existingScript.addEventListener('load', () => resolve(), { once: true });
+      existingScript.addEventListener('error', () => reject(new Error('Unable to load Google Maps script')), {
+        once: true,
+      });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.id = GOOGLE_MAPS_SCRIPT_ID;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Unable to load Google Maps script'));
+    document.head.appendChild(script);
+  });
+
+  return window.__parkdGoogleMapsPromise;
+}
 
 export default function MapCoordinatePicker({
   latitude,
   longitude,
   onChange,
   isPinLocked = false,
+  showZoomControls = false,
 }: MapCoordinatePickerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
+  const pinLockedRef = useRef(isPinLocked);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    pinLockedRef.current = isPinLocked;
+
+    if (markerRef.current) {
+      markerRef.current.setDraggable(!isPinLocked);
+    }
+  }, [isPinLocked]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) {
       return;
     }
 
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() || '';
+    if (!apiKey) {
+      setLoadError('Google Maps API key is missing. Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.');
+      return;
+    }
+
     let isDisposed = false;
 
     const setupMap = async () => {
-      const L = await import('leaflet');
-
-      if (isDisposed || !containerRef.current) {
+      try {
+        await loadGoogleMapsApi(apiKey);
+      } catch (error) {
+        console.error('Unable to load Google Maps API:', error);
+        setLoadError('Unable to load Google Maps right now.');
         return;
       }
 
-      // Use CDN marker icons so the pin is visible in Next.js production builds.
-      L.Icon.Default.mergeOptions({
-        iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-        iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-        shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-      });
-
-      const hasInitialPin = latitude !== null && longitude !== null;
-      const center: [number, number] = hasInitialPin
-        ? [latitude as number, longitude as number]
-        : DEFAULT_CENTER;
-
-      const map = L.map(containerRef.current, {
-        center,
-        zoom: hasInitialPin ? PIN_ZOOM : DEFAULT_ZOOM,
-      });
-
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap contributors',
-      }).addTo(map);
-
-      if (hasInitialPin) {
-        const marker = L.marker(center, { draggable: !isPinLocked }).addTo(map);
-        marker.on('dragend', () => {
-          if (isPinLocked) {
-            return;
-          }
-          const nextPosition = marker.getLatLng();
-          onChange(
-            Number(nextPosition.lat.toFixed(7)),
-            Number(nextPosition.lng.toFixed(7))
-          );
-        });
-        markerRef.current = marker;
+      if (isDisposed || !containerRef.current || !window.google?.maps) {
+        return;
       }
 
-      map.on('click', (event: any) => {
-        if (isPinLocked) {
+      const hasInitialPin = latitude !== null && longitude !== null;
+      const center = hasInitialPin
+        ? { lat: latitude as number, lng: longitude as number }
+        : { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] };
+
+      const map = new window.google.maps.Map(containerRef.current, {
+        center,
+        zoom: hasInitialPin ? PIN_ZOOM : DEFAULT_ZOOM,
+        mapTypeControl: false,
+        zoomControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+      });
+
+      map.addListener('click', (event: any) => {
+        if (pinLockedRef.current) {
           return;
         }
-        const nextLat = Number(event.latlng.lat.toFixed(7));
-        const nextLng = Number(event.latlng.lng.toFixed(7));
+
+        const nextLat = Number(event.latLng?.lat().toFixed(7));
+        const nextLng = Number(event.latLng?.lng().toFixed(7));
+        if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) {
+          return;
+        }
+
         onChange(nextLat, nextLng);
       });
 
       mapRef.current = map;
+      setLoadError('');
     };
 
     void setupMap();
 
     return () => {
       isDisposed = true;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
+      if (markerRef.current) {
+        markerRef.current.setMap(null);
       }
       markerRef.current = null;
+      mapRef.current = null;
     };
-  }, [latitude, longitude, onChange, isPinLocked]);
+  }, [latitude, longitude, onChange]);
 
   useEffect(() => {
-    if (!mapRef.current || latitude === null || longitude === null) {
+    if (!mapRef.current || !window.google?.maps) {
       return;
     }
 
-    import('leaflet')
-      .then((L) => {
-        const position: [number, number] = [latitude, longitude];
+    if (latitude === null || longitude === null) {
+      if (markerRef.current) {
+        markerRef.current.setMap(null);
+        markerRef.current = null;
+      }
+      mapRef.current.setCenter({ lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] });
+      mapRef.current.setZoom(DEFAULT_ZOOM);
+      return;
+    }
 
-        if (!markerRef.current) {
-          const marker = L.marker(position, { draggable: !isPinLocked }).addTo(mapRef.current);
-          marker.on('dragend', () => {
-            if (isPinLocked) {
-              return;
-            }
-            const nextPosition = marker.getLatLng();
-            onChange(
-              Number(nextPosition.lat.toFixed(7)),
-              Number(nextPosition.lng.toFixed(7))
-            );
-          });
-          markerRef.current = marker;
-        } else {
-          markerRef.current.setLatLng(position);
-          if (markerRef.current.dragging) {
-            if (isPinLocked) {
-              markerRef.current.dragging.disable();
-            } else {
-              markerRef.current.dragging.enable();
-            }
-          }
+    const position = { lat: latitude, lng: longitude };
+
+    if (!markerRef.current) {
+      const marker = new window.google.maps.Marker({
+        map: mapRef.current,
+        position,
+        draggable: !pinLockedRef.current,
+      });
+
+      marker.addListener('dragend', (event: any) => {
+        if (pinLockedRef.current) {
+          return;
         }
 
-        mapRef.current.setView(position, PIN_ZOOM);
-      })
-      .catch((error) => {
-        console.error('Unable to load map picker:', error);
+        const nextLat = Number(event.latLng?.lat().toFixed(7));
+        const nextLng = Number(event.latLng?.lng().toFixed(7));
+        if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) {
+          return;
+        }
+
+        onChange(nextLat, nextLng);
       });
+
+      markerRef.current = marker;
+    } else {
+      markerRef.current.setPosition(position);
+      markerRef.current.setDraggable(!pinLockedRef.current);
+    }
+
+    mapRef.current.setCenter(position);
+    mapRef.current.setZoom(PIN_ZOOM);
   }, [latitude, longitude, onChange, isPinLocked]);
+
+  const changeZoom = (delta: number) => {
+    if (!mapRef.current) {
+      return;
+    }
+
+    const currentZoomRaw = Number(mapRef.current.getZoom?.());
+    const currentZoom = Number.isFinite(currentZoomRaw) ? currentZoomRaw : DEFAULT_ZOOM;
+    const nextZoom = Math.max(1, Math.min(21, currentZoom + delta));
+    mapRef.current.setZoom(nextZoom);
+  };
 
   return (
     <div className="relative z-0 overflow-hidden rounded-xl border border-gray-200">
       <div ref={containerRef} className="h-[320px] w-full bg-slate-100" />
+      {showZoomControls && !loadError ? (
+        <div className="absolute left-3 top-3 z-10 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <button
+            type="button"
+            onClick={() => changeZoom(1)}
+            className="flex h-9 w-9 items-center justify-center border-b border-slate-200 text-lg font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+            aria-label="Zoom in"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={() => changeZoom(-1)}
+            className="flex h-9 w-9 items-center justify-center text-lg font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+            aria-label="Zoom out"
+          >
+            -
+          </button>
+        </div>
+      ) : null}
+      {loadError ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-100/90 px-4 text-center text-sm text-rose-700">
+          {loadError}
+        </div>
+      ) : null}
     </div>
   );
 }

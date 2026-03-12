@@ -54,9 +54,11 @@ export default function RegisterPage() {
         return;
       }
 
-      setSuccessMessage('Registration successful. Redirecting to login...');
+      const verificationEmail =
+        typeof result?.user?.email === 'string' ? result.user.email : formData.email.trim();
+      setSuccessMessage('Registration successful. Redirecting to email verification...');
       setTimeout(() => {
-        window.location.href = '/login';
+        window.location.href = `/verify-email?email=${encodeURIComponent(verificationEmail)}`;
       }, 1200);
     } catch (error) {
       console.error('Register submit error:', error);

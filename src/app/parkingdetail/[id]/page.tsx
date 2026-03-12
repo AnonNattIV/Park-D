@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { Star } from 'lucide-react';
 import Tabbar from '@/components/Tabbar';
 import { hasStoredAuth } from '@/lib/auth-client';
-import { Star } from 'lucide-react';
+import { buildGoogleMapsOpenUrl } from '@/lib/google-maps';
 
 type Review = {
   score: number;
@@ -63,7 +64,7 @@ function formatPrice(value: number): string {
   return `${value.toLocaleString('th-TH', {
     minimumFractionDigits: hasDecimal ? 2 : 0,
     maximumFractionDigits: hasDecimal ? 2 : 0,
-  })} บาท/ชม.`;
+  })} THB/hr`;
 }
 
 function formatDateTimeLabel(value: string | null): string {
@@ -98,6 +99,7 @@ function formatDateTimeLabel(value: string | null): string {
     minute: '2-digit',
   });
 }
+
 export default function ParkingDetailPage() {
   const params = useParams();
   const rawId = params?.id;
@@ -183,11 +185,13 @@ export default function ParkingDetailPage() {
     const rounded = Math.max(0, Math.min(5, Math.round(score)));
 
     return (
-      <div className="flex text-sm text-yellow-400">
+      <div className="flex gap-0.5 text-yellow-400">
         {[1, 2, 3, 4, 5].map((star) => (
-          <span key={star} className={star <= rounded ? '' : 'text-gray-300'}>
-            ★
-          </span>
+          <Star
+            key={star}
+            size={14}
+            className={star <= rounded ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}
+          />
         ))}
       </div>
     );
@@ -198,7 +202,7 @@ export default function ParkingDetailPage() {
       <div className="min-h-screen bg-gray-50">
         <Tabbar />
         <div className="flex h-[60vh] items-center justify-center text-gray-500">
-          <p className="text-xl">กำลังโหลดข้อมูล...</p>
+          <p className="text-xl">Loading...</p>
         </div>
       </div>
     );
@@ -208,7 +212,7 @@ export default function ParkingDetailPage() {
     return (
       <div className="min-h-screen bg-gray-50">
         <Tabbar />
-        <div className="p-6 text-center text-red-600">เกิดข้อผิดพลาด: {error}</div>
+        <div className="p-6 text-center text-red-600">Error: {error}</div>
       </div>
     );
   }
@@ -217,7 +221,7 @@ export default function ParkingDetailPage() {
     return (
       <div className="min-h-screen bg-gray-50">
         <Tabbar />
-        <div className="p-6 text-center">ไม่พบข้อมูล</div>
+        <div className="p-6 text-center">No data found</div>
       </div>
     );
   }
@@ -228,6 +232,7 @@ export default function ParkingDetailPage() {
   const rules = data.rules || [];
   const canViewPrice = isAuthenticated;
   const coverImageUrl = lot.imageUrls?.[0] || null;
+  const mapOpenUrl = buildGoogleMapsOpenUrl(lot.latitude, lot.longitude);
 
   return (
     <div className="relative min-h-screen bg-gray-50 pb-28">
@@ -241,7 +246,7 @@ export default function ParkingDetailPage() {
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
-            <span>กลับหน้าหลัก</span>
+            <span>Back to home</span>
           </Link>
         </div>
 
@@ -257,13 +262,31 @@ export default function ParkingDetailPage() {
                     loading="lazy"
                   />
                 ) : lot.mapEmbedUrl ? (
-                  <iframe
-                    title={`Map of ${lot.name}`}
-                    src={lot.mapEmbedUrl}
-                    className="h-full w-full border-0"
-                    loading="lazy"
-                    referrerPolicy="no-referrer-when-downgrade"
-                  />
+                  mapOpenUrl ? (
+                    <a
+                      href={mapOpenUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block h-full w-full cursor-pointer"
+                      aria-label={`Open ${lot.name} on Google Maps`}
+                    >
+                      <iframe
+                        title={`Map of ${lot.name}`}
+                        src={lot.mapEmbedUrl}
+                        className="pointer-events-none h-full w-full border-0"
+                        loading="lazy"
+                        referrerPolicy="no-referrer-when-downgrade"
+                      />
+                    </a>
+                  ) : (
+                    <iframe
+                      title={`Map of ${lot.name}`}
+                      src={lot.mapEmbedUrl}
+                      className="h-full w-full border-0"
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                    />
+                  )
                 ) : (
                   <div className="flex h-full items-center justify-center text-slate-500">
                     Map unavailable
@@ -277,34 +300,34 @@ export default function ParkingDetailPage() {
               <p className="mb-3 text-sm text-gray-500">{lot.address}</p>
               <div className="mb-2 flex items-center gap-2">
                 {renderStars(avgScore)}
-                <span className="text-sm text-gray-500">({reviews.length} รีวิว)</span>
+                <span className="text-sm text-gray-500">({reviews.length} reviews)</span>
               </div>
-              <p className="text-sm text-gray-600">เจ้าของพื้นที่: {lot.ownerName}</p>
+              <p className="text-sm text-gray-600">Owner: {lot.ownerName}</p>
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow-md">
-              <h2 className="mb-3 text-xl font-bold text-gray-800">รายละเอียด</h2>
+              <h2 className="mb-3 text-xl font-bold text-gray-800">Details</h2>
               <div className="mb-4 flex flex-wrap gap-4">
                 <div className="rounded-lg bg-blue-50 px-4 py-2 text-blue-700">
-                  <span className="block text-xs font-semibold uppercase opacity-70">ราคา</span>
+                  <span className="block text-xs font-semibold uppercase opacity-70">Price</span>
                   <span className="text-lg font-bold">
                     {canViewPrice ? formatPrice(lot.price) : 'Login to view price'}
                   </span>
                 </div>
                 <div className="rounded-lg bg-green-50 px-4 py-2 text-green-700">
-                  <span className="block text-xs font-semibold uppercase opacity-70">ช่องจอด</span>
+                  <span className="block text-xs font-semibold uppercase opacity-70">Slots</span>
                   <span className="text-lg font-bold">
-                    ว่าง {lot.availableSlot} / {lot.totalSlot}
+                    Available {lot.availableSlot} / {lot.totalSlot}
                   </span>
                 </div>
               </div>
               <p className="whitespace-pre-line leading-relaxed text-gray-600">
-                {lot.description || 'ไม่พบรายละเอียดเพิ่มเติม'}
+                {lot.description || 'No additional details'}
               </p>
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow-md">
-              <h2 className="mb-3 text-xl font-bold text-gray-800">ประเภทยานพาหนะที่รองรับ</h2>
+              <h2 className="mb-3 text-xl font-bold text-gray-800">Supported Vehicle Types</h2>
               {vehicleTypes.length > 0 ? (
                 <ul className="space-y-2">
                   {vehicleTypes.map((item) => (
@@ -315,12 +338,12 @@ export default function ParkingDetailPage() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-gray-500">ยังไม่ได้ระบุข้อมูล</p>
+                <p className="text-sm text-gray-500">Not specified yet</p>
               )}
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow-md">
-              <h2 className="mb-3 text-xl font-bold text-gray-800">กฎระเบียบ</h2>
+              <h2 className="mb-3 text-xl font-bold text-gray-800">Rules</h2>
               {rules.length > 0 ? (
                 <ul className="space-y-2 text-gray-600">
                   {rules.map((rule) => (
@@ -331,14 +354,14 @@ export default function ParkingDetailPage() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-gray-500">ยังไม่ได้ระบุข้อมูล</p>
+                <p className="text-sm text-gray-500">Not specified yet</p>
               )}
             </div>
           </div>
 
           <div className="space-y-6">
             <div className="rounded-2xl bg-white p-6 shadow-md">
-              <h2 className="mb-4 text-xl font-bold text-gray-800">รีวิวจากผู้ใช้งาน</h2>
+              <h2 className="mb-4 text-xl font-bold text-gray-800">User Reviews</h2>
               <div className="space-y-4">
                 {reviews.length > 0 ? (
                   reviews.map((review, index) => (
@@ -361,7 +384,7 @@ export default function ParkingDetailPage() {
                     </div>
                   ))
                 ) : (
-                  <p className="text-sm text-gray-500">ยังไม่มีรีวิวสำหรับที่จอดรถนี้</p>
+                  <p className="text-sm text-gray-500">No reviews for this parking lot yet.</p>
                 )}
               </div>
             </div>
@@ -378,33 +401,52 @@ export default function ParkingDetailPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-gray-500">
-                  No reservation time in current window.
-                </p>
+                <p className="text-sm text-gray-500">No reservation time in current window.</p>
               )}
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow-md">
-              <h2 className="mb-4 text-xl font-bold text-gray-800">ตำแหน่งที่ตั้ง</h2>
+              <h2 className="mb-4 text-xl font-bold text-gray-800">Location</h2>
               <div className="relative h-64 overflow-hidden rounded-xl bg-gray-100">
                 {lot.mapEmbedUrl ? (
-                  <iframe
-                    title={`Location of ${lot.name}`}
-                    src={lot.mapEmbedUrl}
-                    className="h-full w-full border-0"
-                    loading="lazy"
-                    referrerPolicy="no-referrer-when-downgrade"
-                  />
+                  mapOpenUrl ? (
+                    <a
+                      href={mapOpenUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block h-full w-full cursor-pointer"
+                      aria-label={`Open ${lot.name} location on Google Maps`}
+                    >
+                      <iframe
+                        title={`Location of ${lot.name}`}
+                        src={lot.mapEmbedUrl}
+                        className="pointer-events-none h-full w-full border-0"
+                        loading="lazy"
+                        referrerPolicy="no-referrer-when-downgrade"
+                      />
+                    </a>
+                  ) : (
+                    <iframe
+                      title={`Location of ${lot.name}`}
+                      src={lot.mapEmbedUrl}
+                      className="h-full w-full border-0"
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                    />
+                  )
                 ) : (
                   <div className="flex h-full items-center justify-center text-gray-500">
-                    ไม่พบพิกัดแผนที่
+                    Coordinates not available
                   </div>
                 )}
               </div>
+              {mapOpenUrl ? (
+                <p className="mt-2 text-xs text-blue-600">Tap map to open in Google Maps.</p>
+              ) : null}
               <p className="mt-3 text-sm text-gray-600">{lot.address}</p>
               {lot.latitude !== null && lot.longitude !== null ? (
                 <p className="mt-1 text-xs text-gray-500">
-                  พิกัด: {lot.latitude.toFixed(6)}, {lot.longitude.toFixed(6)}
+                  Coordinates: {lot.latitude.toFixed(6)}, {lot.longitude.toFixed(6)}
                 </p>
               ) : null}
             </div>
@@ -422,7 +464,7 @@ export default function ParkingDetailPage() {
                 href={`/booking/${lotId}`}
                 className="rounded-lg bg-[#5B7CFF] px-10 py-3 font-bold text-white shadow-sm transition-colors hover:bg-[#4a6bef]"
               >
-                จอง
+                Book
               </Link>
             </div>
           </div>
@@ -431,5 +473,4 @@ export default function ParkingDetailPage() {
     </div>
   );
 }
-
 

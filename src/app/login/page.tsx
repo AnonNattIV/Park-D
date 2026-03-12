@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 
 export default function LoginPage() {
   const [formData, setFormData] = useState({
-    username: '',
+    identifier: '',
     password: '',
   });
   const [showPassword, setShowPassword] = useState(false);
@@ -38,8 +39,8 @@ export default function LoginPage() {
     setErrorMessage('');
     setSuccessMessage('');
 
-    if (!formData.username.trim() || !formData.password) {
-      setErrorMessage('Username and password are required');
+    if (!formData.identifier.trim() || !formData.password) {
+      setErrorMessage('Email/username and password are required');
       return;
     }
 
@@ -249,13 +250,13 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Username Input */}
+            {/* Email/Username Input */}
             <div className="relative group">
               <input
                 type="text"
-                placeholder="Username"
-                value={formData.username}
-                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                placeholder="Email or Username"
+                value={formData.identifier}
+                onChange={(e) => setFormData({ ...formData, identifier: e.target.value })}
                 required
                 className="w-full px-5 py-4 bg-white/60 backdrop-blur-sm rounded-xl text-gray-700 placeholder-gray-400 border border-white/30
                   focus:outline-none focus:ring-2 focus:ring-[#5B7CFF] focus:bg-white/90
@@ -311,14 +312,21 @@ export default function LoginPage() {
             </div>
 
             {/* Forgot Password Link */}
-            <div className="text-center">
-              <button
-                type="button"
-                className="text-gray-400 hover:text-gray-600 hover:underline
-                  transition-all duration-300 ease-in-out"
+            <div className="space-y-2 text-center">
+              <Link
+                href="/forgot-password"
+                className="text-gray-400 transition-all duration-300 ease-in-out hover:text-gray-600 hover:underline"
               >
                 Forgot password?
-              </button>
+              </Link>
+              <div>
+                <Link
+                  href="/verify-email"
+                  className="text-gray-400 transition-all duration-300 ease-in-out hover:text-gray-600 hover:underline"
+                >
+                  Verify email
+                </Link>
+              </div>
             </div>
 
             {/* Login Button */}

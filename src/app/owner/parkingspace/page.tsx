@@ -86,6 +86,7 @@ function parseListField(value: string): string[] {
 
 export default function ParkingSpacePage() {
   const router = useRouter();
+  const googleMapsApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() || '';
   const [isReady, setIsReady] = useState(false);
   const [token, setToken] = useState('');
   const [formData, setFormData] = useState<ParkingForm>(createInitialFormData);
@@ -256,6 +257,10 @@ export default function ParkingSpacePage() {
     if (addressSegments.length === 0) {
       return;
     }
+    if (!googleMapsApiKey) {
+      setLocateError('Google Maps API key is missing. Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.');
+      return;
+    }
 
     const query = [...addressSegments, 'Thailand'].join(', ');
     const requestId = ++locateRequestIdRef.current;
@@ -265,7 +270,7 @@ export default function ParkingSpacePage() {
 
     try {
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`,
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&language=th&region=th&key=${encodeURIComponent(googleMapsApiKey)}`,
         {
           method: 'GET',
         }
@@ -275,8 +280,18 @@ export default function ParkingSpacePage() {
         throw new Error('Unable to locate pin by address');
       }
 
-      const result = (await response.json()) as Array<{ lat: string; lon: string }>;
-      if (!Array.isArray(result) || result.length === 0) {
+      const result = (await response.json()) as {
+        status?: string;
+        results?: Array<{
+          geometry?: {
+            location?: {
+              lat?: number;
+              lng?: number;
+            };
+          };
+        }>;
+      };
+      if (result.status !== 'OK' || !Array.isArray(result.results) || result.results.length === 0) {
         return;
       }
 
@@ -284,8 +299,8 @@ export default function ParkingSpacePage() {
         return;
       }
 
-      const nextLatitude = Number(result[0].lat);
-      const nextLongitude = Number(result[0].lon);
+      const nextLatitude = Number(result.results[0]?.geometry?.location?.lat);
+      const nextLongitude = Number(result.results[0]?.geometry?.location?.lng);
 
       if (!Number.isFinite(nextLatitude) || !Number.isFinite(nextLongitude)) {
         throw new Error('Invalid coordinate response from map service.');
@@ -309,6 +324,7 @@ export default function ParkingSpacePage() {
     formData.district,
     formData.amphoe,
     formData.province,
+    googleMapsApiKey,
     setCoordinates,
   ]);
 
@@ -742,6 +758,7 @@ export default function ParkingSpacePage() {
               longitude={numericLongitude}
               onChange={handleMapCoordinateChange}
               isPinLocked={isPinLocked}
+              showZoomControls
             />
 
             {errors.latitude || errors.longitude ? (

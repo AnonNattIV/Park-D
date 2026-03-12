@@ -18,11 +18,21 @@ interface LoginRow extends RowDataPacket {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const usernameInput = typeof body?.username === 'string' ? sanitizeUsername(body.username) : '';
+    const rawIdentifier =
+      (typeof body?.identifier === 'string' && body.identifier.trim()) ||
+      (typeof body?.username === 'string' && body.username.trim()) ||
+      (typeof body?.email === 'string' && body.email.trim()) ||
+      '';
+    const identifier = rawIdentifier.trim();
+    const usernameInput = sanitizeUsername(identifier);
+    const emailInput = identifier.toLowerCase();
     const password = typeof body?.password === 'string' ? body.password : '';
 
-    if (!usernameInput || !password) {
-      return NextResponse.json({ error: 'Username and password are required' }, { status: 400 });
+    if (!identifier || !password) {
+      return NextResponse.json(
+        { error: 'Email/username and password are required' },
+        { status: 400 }
+      );
     }
 
     const pool = getPool();
@@ -38,9 +48,9 @@ export async function POST(request: NextRequest) {
         CASE WHEN op.user_id IS NULL THEN 0 ELSE 1 END AS has_owner_profile
       FROM users u
       LEFT JOIN owner_profiles op ON op.user_id = u.user_id
-      WHERE u.username = ? OR u.email = ?
+      WHERE u.username = ? OR LOWER(u.email) = LOWER(?)
       LIMIT 1`,
-      [usernameInput, usernameInput]
+      [usernameInput, emailInput]
     );
 
     if (rows.length === 0) {
@@ -52,7 +62,9 @@ export async function POST(request: NextRequest) {
     
     if (currentStatus !== 'ACTIVE') {
       let errorMessage = 'This account is not active';
-      if (currentStatus === 'SUSPENDED') {
+      if (currentStatus === 'INACTIVE') {
+        errorMessage = 'Please verify your email before login.';
+      } else if (currentStatus === 'SUSPENDED') {
         errorMessage = 'Your account has been suspended.';
       } else if (currentStatus === 'BANNED') {
         errorMessage = 'Your account has been permanently banned.';

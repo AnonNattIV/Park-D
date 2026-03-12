@@ -284,11 +284,27 @@ export default function ProfilePage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isDeletingImage, setIsDeletingImage] = useState(false);
+  const [isSendingSecurityCode, setIsSendingSecurityCode] = useState(false);
+  const [securityCodeCooldownSeconds, setSecurityCodeCooldownSeconds] = useState(0);
+  const [isCheckingCurrentEmailCode, setIsCheckingCurrentEmailCode] = useState(false);
+  const [isCheckingNewEmailCode, setIsCheckingNewEmailCode] = useState(false);
+  const [isCheckingPassword, setIsCheckingPassword] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [formError, setFormError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [isCurrentEmailCodeChecked, setIsCurrentEmailCodeChecked] = useState(false);
+  const [isNewEmailCodeChecked, setIsNewEmailCodeChecked] = useState(false);
+  const [isPasswordChecked, setIsPasswordChecked] = useState(false);
+  const [currentEmailCode, setCurrentEmailCode] = useState('');
+  const [newEmailCode, setNewEmailCode] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const authUserId = authUser?.id;
   const authUsername = authUser?.username;
+  const normalizedCurrentEmail = (authUser?.email || '').toLowerCase();
+  const normalizedFormEmail = formData.email.trim().toLowerCase();
+  const isEmailChangePending = Boolean(normalizedFormEmail && normalizedFormEmail !== normalizedCurrentEmail);
 
   useEffect(() => {
     // Client-side guard for routes that require auth token + user payload.
@@ -398,8 +414,26 @@ export default function ProfilePage() {
     setExpandedWalletTransactionId(null);
   }, [wallet?.id]);
 
+  useEffect(() => {
+    if (securityCodeCooldownSeconds <= 0) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setSecurityCodeCooldownSeconds((previous) => (previous > 0 ? previous - 1 : 0));
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [securityCodeCooldownSeconds]);
+
   const handleInputChange = (field: keyof ProfileForm, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+    if (field === 'email') {
+      setIsCurrentEmailCodeChecked(false);
+      setIsNewEmailCodeChecked(false);
+    }
     if (formError) {
       setFormError('');
     }
@@ -506,6 +540,216 @@ export default function ProfilePage() {
     }
   };
 
+  const handleSendSecurityCode = async () => {
+    if (!token || !authUser) {
+      return;
+    }
+    if (securityCodeCooldownSeconds > 0) {
+      setFormError(`Please wait ${securityCodeCooldownSeconds}s before sending new code`);
+      return;
+    }
+
+    const nextEmail = normalizedFormEmail;
+    if (!nextEmail) {
+      setFormError('Email is required before requesting verification code');
+      return;
+    }
+    if (nextEmail === normalizedCurrentEmail) {
+      setFormError('Please change email before requesting verification code');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+      setFormError('Invalid new email format');
+      return;
+    }
+
+    setFormError('');
+    setSuccessMessage('');
+    setIsSendingSecurityCode(true);
+
+    try {
+      const response = await fetch('/api/auth/sensitive-code', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          newEmail: nextEmail,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+        message?: string;
+        retryAfterSeconds?: number;
+      };
+
+      if (!response.ok) {
+        if (response.status === 429 && Number(result.retryAfterSeconds || 0) > 0) {
+          setSecurityCodeCooldownSeconds(Number(result.retryAfterSeconds || 0));
+        }
+        throw new Error(result.error || 'Unable to send verification code');
+      }
+
+      setIsCurrentEmailCodeChecked(false);
+      setIsNewEmailCodeChecked(false);
+      setSecurityCodeCooldownSeconds(Math.max(Number(result.retryAfterSeconds || 60), 60));
+      setSuccessMessage(
+        result.message || 'Verification codes sent to your current and new email.'
+      );
+    } catch (error) {
+      console.error('Send security code error:', error);
+      setFormError(
+        error instanceof Error ? error.message : 'Unable to send verification code right now'
+      );
+    } finally {
+      setIsSendingSecurityCode(false);
+    }
+  };
+
+  const handleCheckSecurityCode = async (channel: 'CURRENT' | 'NEW') => {
+    if (!token || !authUser) {
+      return;
+    }
+
+    const nextEmail = normalizedFormEmail;
+    const code = channel === 'CURRENT' ? currentEmailCode.trim() : newEmailCode.trim();
+
+    if (!nextEmail || !isEmailChangePending) {
+      setFormError('Please change email before checking verification code');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+      setFormError('Invalid new email format');
+      return;
+    }
+    if (!code) {
+      setFormError('Verification code is required');
+      return;
+    }
+
+    setFormError('');
+    setSuccessMessage('');
+    if (channel === 'CURRENT') {
+      setIsCheckingCurrentEmailCode(true);
+    } else {
+      setIsCheckingNewEmailCode(true);
+    }
+
+    try {
+      const response = await fetch('/api/auth/sensitive-code/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          newEmail: nextEmail,
+          code,
+          channel,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+        message?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to verify code');
+      }
+
+      if (channel === 'CURRENT') {
+        setIsCurrentEmailCodeChecked(true);
+      } else {
+        setIsNewEmailCodeChecked(true);
+      }
+      setSuccessMessage(
+        result.message ||
+          (channel === 'CURRENT'
+            ? 'Current-email verification code is valid.'
+            : 'New-email verification code is valid.')
+      );
+    } catch (error) {
+      console.error('Check security code error:', error);
+      if (channel === 'CURRENT') {
+        setIsCurrentEmailCodeChecked(false);
+      } else {
+        setIsNewEmailCodeChecked(false);
+      }
+      setFormError(error instanceof Error ? error.message : 'Unable to verify code right now');
+    } finally {
+      if (channel === 'CURRENT') {
+        setIsCheckingCurrentEmailCode(false);
+      } else {
+        setIsCheckingNewEmailCode(false);
+      }
+    }
+  };
+
+  const handleCheckPassword = async () => {
+    if (!token || !authUser) {
+      return;
+    }
+
+    const trimmedNewPassword = newPassword.trim();
+    const trimmedConfirmNewPassword = confirmNewPassword.trim();
+
+    if (!currentPassword) {
+      setFormError('Current password is required to change password');
+      return;
+    }
+    if (!trimmedNewPassword || !trimmedConfirmNewPassword) {
+      setFormError('New password and confirm password are required');
+      return;
+    }
+    if (trimmedNewPassword !== trimmedConfirmNewPassword) {
+      setFormError('New password and confirm password do not match');
+      return;
+    }
+
+    setFormError('');
+    setSuccessMessage('');
+    setIsCheckingPassword(true);
+
+    try {
+      const response = await fetch('/api/auth/password-check', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword: trimmedNewPassword,
+          confirmNewPassword: trimmedConfirmNewPassword,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+        message?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to check password');
+      }
+
+      setIsPasswordChecked(true);
+      setSuccessMessage(result.message || 'Password information is valid.');
+    } catch (error) {
+      console.error('Check password error:', error);
+      setIsPasswordChecked(false);
+      setFormError(error instanceof Error ? error.message : 'Unable to check password right now');
+    } finally {
+      setIsCheckingPassword(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!token || !authUser) {
       return;
@@ -515,6 +759,12 @@ export default function ProfilePage() {
     const gender = formData.gender.trim();
     const ageInput = formData.age.trim();
     const email = formData.email.trim();
+    const normalizedEmail = email.toLowerCase();
+    const trimmedNewPassword = newPassword.trim();
+    const trimmedConfirmNewPassword = confirmNewPassword.trim();
+    const currentEmail = (authUser.email || '').toLowerCase();
+    const emailChanged = normalizedEmail !== currentEmail;
+    const passwordChangeRequested = trimmedNewPassword.length > 0;
     let age: number | null = null;
 
     if (!firstName) {
@@ -546,6 +796,28 @@ export default function ProfilePage() {
       age = parsedAge;
     }
 
+    if (trimmedConfirmNewPassword && !passwordChangeRequested) {
+      setFormError('Please enter new password before confirm password');
+      return;
+    }
+
+    if (passwordChangeRequested) {
+      if (!currentPassword) {
+        setFormError('Current password is required to change password');
+        return;
+      }
+
+      if (trimmedNewPassword !== trimmedConfirmNewPassword) {
+        setFormError('New password and confirm password do not match');
+        return;
+      }
+    }
+
+    if (emailChanged && (!currentEmailCode.trim() || !newEmailCode.trim())) {
+      setFormError('Both current-email and new-email verification codes are required');
+      return;
+    }
+
     setIsSaving(true);
     setFormError('');
     setSuccessMessage('');
@@ -562,8 +834,12 @@ export default function ProfilePage() {
           surname: formData.lastName.trim(),
           gender,
           age,
-          email,
+          email: normalizedEmail,
           phone: formData.phone.trim(),
+          currentPassword,
+          newPassword: trimmedNewPassword,
+          currentEmailCode: currentEmailCode.trim(),
+          newEmailCode: newEmailCode.trim(),
         }),
       });
 
@@ -602,6 +878,13 @@ export default function ProfilePage() {
 
       setAuthUser(nextStoredUser);
       updateStoredAuthUser(nextStoredUser);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setCurrentEmailCode('');
+      setNewEmailCode('');
+      setIsCurrentEmailCodeChecked(false);
+      setIsNewEmailCodeChecked(false);
       setSuccessMessage('à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§');
     } catch (error) {
       console.error('Profile save error:', error);
@@ -766,20 +1049,7 @@ export default function ProfilePage() {
               <p className="mt-1 text-sm text-gray-500">Keep your contact details current</p>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  Email ID <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => handleInputChange('email', e.target.value)}
-                  className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all focus:border-[#5B7CFF] focus:outline-none focus:ring-2 focus:ring-[#5B7CFF]/20"
-                  placeholder="Enter email address"
-                />
-              </div>
-
+            <div className="grid grid-cols-1 gap-6">
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-700">
                   Phone No
@@ -791,6 +1061,221 @@ export default function ProfilePage() {
                   className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all focus:border-[#5B7CFF] focus:outline-none focus:ring-2 focus:ring-[#5B7CFF]/20"
                   placeholder="Enter phone number"
                 />
+              </div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-slate-800">Email Change</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Email change requires one code from current email and one code from new email.
+                </p>
+
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      Current Email
+                    </label>
+                    <input
+                      type="text"
+                      value={normalizedCurrentEmail || '-'}
+                      disabled
+                      className="w-full cursor-not-allowed rounded-lg border border-gray-200 bg-gray-100 px-4 py-3 text-gray-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      New Email <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) => handleInputChange('email', e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all focus:border-[#5B7CFF] focus:outline-none focus:ring-2 focus:ring-[#5B7CFF]/20"
+                      placeholder="Enter new email address"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleSendSecurityCode();
+                    }}
+                    disabled={
+                      isSendingSecurityCode ||
+                      !isEmailChangePending ||
+                      securityCodeCooldownSeconds > 0
+                    }
+                    className="rounded-lg border border-[#5B7CFF] bg-white px-4 py-2 text-sm font-semibold text-[#5B7CFF] transition hover:bg-[#EEF2FF] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isSendingSecurityCode
+                      ? 'Sending code...'
+                      : securityCodeCooldownSeconds > 0
+                        ? `Send again in ${securityCodeCooldownSeconds}s`
+                        : 'Send Verification Codes'}
+                  </button>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      Current Email Code
+                    </label>
+                    <input
+                      type="text"
+                      value={currentEmailCode}
+                      onChange={(e) => {
+                        setCurrentEmailCode(e.target.value);
+                        if (isCurrentEmailCodeChecked) {
+                          setIsCurrentEmailCodeChecked(false);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all focus:border-[#5B7CFF] focus:outline-none focus:ring-2 focus:ring-[#5B7CFF]/20"
+                      placeholder="Code sent to current email"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleCheckSecurityCode('CURRENT');
+                      }}
+                      disabled={
+                        isCheckingCurrentEmailCode ||
+                        !isEmailChangePending ||
+                        !currentEmailCode.trim()
+                      }
+                      className="rounded-lg border border-emerald-500 bg-white px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isCheckingCurrentEmailCode ? 'Checking...' : 'Check Current Code'}
+                    </button>
+                    {isCurrentEmailCodeChecked ? (
+                      <span className="text-xs font-semibold text-emerald-600">
+                        Current code checked
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      New Email Code
+                    </label>
+                    <input
+                      type="text"
+                      value={newEmailCode}
+                      onChange={(e) => {
+                        setNewEmailCode(e.target.value);
+                        if (isNewEmailCodeChecked) {
+                          setIsNewEmailCodeChecked(false);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all focus:border-[#5B7CFF] focus:outline-none focus:ring-2 focus:ring-[#5B7CFF]/20"
+                      placeholder="Code sent to new email"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleCheckSecurityCode('NEW');
+                      }}
+                      disabled={isCheckingNewEmailCode || !isEmailChangePending || !newEmailCode.trim()}
+                      className="rounded-lg border border-emerald-500 bg-white px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isCheckingNewEmailCode ? 'Checking...' : 'Check New Code'}
+                    </button>
+                    {isNewEmailCodeChecked ? (
+                      <span className="text-xs font-semibold text-emerald-600">
+                        New code checked
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-slate-800">Password Change</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Password change requires only your current password.
+                </p>
+
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      Current Password
+                    </label>
+                    <input
+                      type="password"
+                      value={currentPassword}
+                      onChange={(e) => {
+                        setCurrentPassword(e.target.value);
+                        if (isPasswordChecked) {
+                          setIsPasswordChecked(false);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all focus:border-[#5B7CFF] focus:outline-none focus:ring-2 focus:ring-[#5B7CFF]/20"
+                      placeholder="Required only for password change"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">New Password</label>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => {
+                        setNewPassword(e.target.value);
+                        if (isPasswordChecked) {
+                          setIsPasswordChecked(false);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all focus:border-[#5B7CFF] focus:outline-none focus:ring-2 focus:ring-[#5B7CFF]/20"
+                      placeholder="Leave empty to keep current password"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
+                      Confirm New Password
+                    </label>
+                    <input
+                      type="password"
+                      value={confirmNewPassword}
+                      onChange={(e) => {
+                        setConfirmNewPassword(e.target.value);
+                        if (isPasswordChecked) {
+                          setIsPasswordChecked(false);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 transition-all focus:border-[#5B7CFF] focus:outline-none focus:ring-2 focus:ring-[#5B7CFF]/20"
+                      placeholder="Confirm new password"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleCheckPassword();
+                      }}
+                      disabled={
+                        isCheckingPassword ||
+                        !currentPassword ||
+                        !newPassword.trim() ||
+                        !confirmNewPassword.trim()
+                      }
+                      className="rounded-lg border border-emerald-500 bg-white px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isCheckingPassword ? 'Checking...' : 'Check Password'}
+                    </button>
+                    {isPasswordChecked ? (
+                      <span className="text-xs font-semibold text-emerald-600">
+                        Password checked
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             </div>
           </section>

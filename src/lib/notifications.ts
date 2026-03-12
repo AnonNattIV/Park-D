@@ -2,6 +2,7 @@ import 'server-only';
 
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import type { Pool, PoolConnection } from 'mysql2/promise';
+import { isBrevoMailConfigured, sendTransactionalEmail } from '@/lib/email';
 
 type QueryExecutor = Pick<Pool, 'query'> | Pick<PoolConnection, 'query'>;
 
@@ -24,12 +25,24 @@ interface AdminUserRow extends RowDataPacket {
   user_id: number;
 }
 
+interface UserEmailRow extends RowDataPacket {
+  user_id: number;
+  username: string;
+  email: string;
+  u_status: string;
+}
+
 export interface NotificationPayload {
   userId: number;
   type: string;
   title: string;
   message: string;
   actionUrl?: string | null;
+}
+
+export interface DeliverableNotificationPayload extends NotificationPayload {
+  sendEmail?: boolean;
+  emailSubject?: string;
 }
 
 export interface UserNotification {
@@ -71,6 +84,61 @@ function normalizeActionUrl(value: string | null | undefined): string | null {
   }
 
   return normalized.slice(0, 1024);
+}
+
+function normalizeEmailSubject(value: string | undefined, fallback: string): string {
+  const normalized = (value || '').trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  return normalized.slice(0, 180);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function resolveAppBaseUrl(): string {
+  const raw =
+    process.env.APP_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.RAILWAY_PUBLIC_DOMAIN?.trim() ||
+    '';
+
+  if (!raw) {
+    return '';
+  }
+
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  return withScheme.replace(/\/+$/, '');
+}
+
+function toAbsoluteUrl(actionUrl: string | null | undefined): string | null {
+  if (!actionUrl) {
+    return null;
+  }
+
+  const trimmed = actionUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  const baseUrl = resolveAppBaseUrl();
+  if (!baseUrl) {
+    return null;
+  }
+
+  return `${baseUrl}${trimmed.startsWith('/') ? trimmed : `/${trimmed}`}`;
 }
 
 export async function ensureNotificationTables(executor: QueryExecutor): Promise<void> {
@@ -149,6 +217,90 @@ export async function createNotification(
   payload: NotificationPayload
 ): Promise<void> {
   await createNotifications(executor, [payload]);
+}
+
+async function sendNotificationEmails(
+  executor: QueryExecutor,
+  payloads: DeliverableNotificationPayload[]
+): Promise<void> {
+  if (!isBrevoMailConfigured()) {
+    return;
+  }
+
+  const targets = payloads.filter(
+    (payload) => payload.sendEmail === true && Number.isInteger(payload.userId) && payload.userId > 0
+  );
+  if (targets.length === 0) {
+    return;
+  }
+
+  const uniqueUserIds = Array.from(new Set(targets.map((payload) => payload.userId)));
+  const placeholders = uniqueUserIds.map(() => '?').join(', ');
+
+  const [rows] = await executor.query<UserEmailRow[]>(
+    `SELECT user_id, username, email, u_status
+    FROM users
+    WHERE user_id IN (${placeholders})`,
+    uniqueUserIds
+  );
+
+  const activeUsers = new Map<number, UserEmailRow>();
+  for (const row of rows) {
+    if (row.u_status === 'ACTIVE' && row.email) {
+      activeUsers.set(Number(row.user_id), row);
+    }
+  }
+
+  for (const payload of targets) {
+    const user = activeUsers.get(payload.userId);
+    if (!user) {
+      continue;
+    }
+
+    const actionUrl = normalizeActionUrl(payload.actionUrl);
+    const absoluteActionUrl = toAbsoluteUrl(actionUrl);
+    const subject = normalizeEmailSubject(payload.emailSubject, payload.title || 'Park:D notification');
+    const safeTitle = escapeHtml(payload.title || 'Notification');
+    const safeMessage = escapeHtml(payload.message || '-');
+    const safeUsername = escapeHtml(user.username || 'User');
+    const actionHtml = absoluteActionUrl
+      ? `<p style="margin-top:14px"><a href="${escapeHtml(absoluteActionUrl)}" style="color:#2563eb;text-decoration:none;font-weight:600">Open in Park:D</a></p>`
+      : '';
+    const actionText = absoluteActionUrl ? `\nOpen: ${absoluteActionUrl}` : '';
+
+    try {
+      await sendTransactionalEmail({
+        to: user.email,
+        subject,
+        html: `
+          <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
+            <h2 style="margin:0 0 12px 0">${safeTitle}</h2>
+            <p>Hello ${safeUsername},</p>
+            <p>${safeMessage}</p>
+            ${actionHtml}
+          </div>
+        `,
+        text: `${payload.title}\n${payload.message}${actionText}`,
+      });
+    } catch (mailError) {
+      console.error('Unable to send notification email:', mailError);
+    }
+  }
+}
+
+export async function createNotificationsWithDelivery(
+  executor: QueryExecutor,
+  payloads: DeliverableNotificationPayload[]
+): Promise<void> {
+  await createNotifications(executor, payloads);
+  await sendNotificationEmails(executor, payloads);
+}
+
+export async function createNotificationWithDelivery(
+  executor: QueryExecutor,
+  payload: DeliverableNotificationPayload
+): Promise<void> {
+  await createNotificationsWithDelivery(executor, [payload]);
 }
 
 export async function getUnreadNotificationCount(

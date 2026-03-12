@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
+import { buildGoogleMapsEmbedUrl } from '@/lib/google-maps';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,8 @@ interface BookingDetailRow extends RowDataPacket {
   lot_id: number;
   lot_name: string | null;
   location: string;
+  latitude: number | string | null;
+  longitude: number | string | null;
   price: number | string;
   plate_id: string;
   booking_time: Date | string;
@@ -113,6 +116,8 @@ export async function GET(
         b.lot_id,
         pl.lot_name,
         pl.location,
+        pl.latitude,
+        pl.longitude,
         pl.price,
         b.plate_id,
         b.booking_time,
@@ -182,6 +187,10 @@ export async function GET(
     }
 
     const row = rows[0];
+    const rawLatitude = row.latitude === null ? null : Number(row.latitude);
+    const rawLongitude = row.longitude === null ? null : Number(row.longitude);
+    const latitude = rawLatitude !== null && Number.isFinite(rawLatitude) ? rawLatitude : null;
+    const longitude = rawLongitude !== null && Number.isFinite(rawLongitude) ? rawLongitude : null;
     const isRenter = Number(row.user_id) === requester.userId;
     const isOwner = Number(row.owner_user_id) === requester.userId;
     const isAdmin = requester.role === 'admin';
@@ -203,6 +212,9 @@ export async function GET(
           id: row.lot_id,
           name: row.lot_name?.trim() || row.location,
           location: row.location,
+          latitude,
+          longitude,
+          mapEmbedUrl: buildGoogleMapsEmbedUrl(latitude, longitude),
           price: Number(row.price || 0),
         },
         plateId: row.plate_id,

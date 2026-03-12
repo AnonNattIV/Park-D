@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import getPool from '@/lib/db/mysql';
-import { verifyToken } from '@/lib/auth';
+import {
+  hashPassword,
+  isValidEmail,
+  validatePassword,
+  verifyPassword,
+  verifyToken,
+} from '@/lib/auth';
 import { OwnerRequestStatus, resolveAppRole } from '@/lib/roles';
 import { ensureWalletTables, getUserWalletWithTransactions } from '@/lib/wallet';
 import { runBookingCheckoutAutomation } from '@/lib/booking-checkout';
@@ -10,6 +16,8 @@ import {
   createNotification,
   ensureNotificationTables,
 } from '@/lib/notifications';
+import { isBrevoMailConfigured, sendTransactionalEmail } from '@/lib/email';
+import { ensureSecurityCodeTable, verifyAndConsumeSecurityCode } from '@/lib/security-codes';
 
 type PatchAction = 'REQUEST_OWNER' | 'APPROVE_OWNER' | 'REJECT_OWNER';
 const GENDER_OPTIONS = ['Male', 'Female', 'Other'] as const;
@@ -34,6 +42,14 @@ interface UserRow extends RowDataPacket {
   owner_request_status: OwnerRequestStatus;
   roles: string;
   has_owner_profile: number;
+}
+
+interface UserCredentialRow extends RowDataPacket {
+  user_id: number;
+  username: string;
+  email: string;
+  password_hash: string;
+  u_status: 'ACTIVE' | 'INACTIVE' | 'BANNED';
 }
 
 interface OwnerRoleRow extends RowDataPacket {
@@ -106,6 +122,23 @@ async function getUserById(userId: number): Promise<UserRow | null> {
     FROM users u
     LEFT JOIN owner_profiles op ON op.user_id = u.user_id
     WHERE u.user_id = ?
+    LIMIT 1`,
+    [userId]
+  );
+
+  return rows[0] || null;
+}
+
+async function getUserCredentialById(userId: number): Promise<UserCredentialRow | null> {
+  const [rows] = await getPool().query<UserCredentialRow[]>(
+    `SELECT
+      user_id,
+      username,
+      email,
+      password_hash,
+      u_status
+    FROM users
+    WHERE user_id = ?
     LIMIT 1`,
     [userId]
   );
@@ -309,10 +342,20 @@ export async function PUT(
     const surname = typeof body?.surname === 'string' ? body.surname.trim() : '';
     const rawGender = typeof body?.gender === 'string' ? body.gender.trim() : '';
     const rawAge = body?.age;
-    const email = typeof body?.email === 'string' ? body.email.trim() : '';
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
     const phone = typeof body?.phone === 'string' ? body.phone.trim() : '';
+    const currentPassword = typeof body?.currentPassword === 'string' ? body.currentPassword : '';
+    const newPassword = typeof body?.newPassword === 'string' ? body.newPassword : '';
+    const currentEmailCode =
+      typeof body?.currentEmailCode === 'string' ? body.currentEmailCode.trim() : '';
+    const newEmailCode = typeof body?.newEmailCode === 'string' ? body.newEmailCode.trim() : '';
     const gender = rawGender || null;
     let age: number | null = null;
+
+    const currentUserCredential = await getUserCredentialById(userId);
+    if (!currentUserCredential) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
 
     if (!name) {
       return NextResponse.json({ error: 'First name is required' }, { status: 400 });
@@ -322,7 +365,7 @@ export async function PUT(
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!isValidEmail(email)) {
       return NextResponse.json({ error: 'Invalid email format' }, { status: 400 });
     }
 
@@ -338,17 +381,98 @@ export async function PUT(
       age = parsedAge;
     }
 
-    if (await emailExistsForAnotherUser(email, userId)) {
+    const emailChanged = email !== currentUserCredential.email.trim().toLowerCase();
+    const passwordChangeRequested = newPassword.trim().length > 0;
+    const isSelfUpdate = requesterId === userId;
+    const isSensitiveUpdate = emailChanged || passwordChangeRequested;
+    const isEmailVerificationRequired = emailChanged;
+
+    if (!isSelfUpdate && passwordChangeRequested) {
+      return NextResponse.json(
+        { error: 'Only account owner can change password from profile settings' },
+        { status: 403 }
+      );
+    }
+
+    if (emailChanged && (await emailExistsForAnotherUser(email, userId))) {
       return NextResponse.json({ error: 'Email is already in use' }, { status: 409 });
     }
 
-    const [updateResult] = await getPool().query<ResultSetHeader>(
+    if (passwordChangeRequested) {
+      if (!currentPassword) {
+        return NextResponse.json({ error: 'Current password is required' }, { status: 400 });
+      }
+
+      const currentPasswordValid = await verifyPassword(
+        currentPassword,
+        currentUserCredential.password_hash
+      );
+      if (!currentPasswordValid) {
+        return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 });
+      }
+
+      const passwordValidation = validatePassword(newPassword);
+      if (!passwordValidation.valid) {
+        return NextResponse.json(
+          { error: passwordValidation.message || 'Weak password' },
+          { status: 400 }
+        );
+      }
+    }
+
+    const pool = getPool();
+    if (isSelfUpdate && isEmailVerificationRequired) {
+      if (!currentEmailCode || !newEmailCode) {
+        return NextResponse.json(
+          { error: 'Both current-email and new-email verification codes are required' },
+          { status: 400 }
+        );
+      }
+
+      await ensureSecurityCodeTable(pool);
+      const currentCodeValid = await verifyAndConsumeSecurityCode(pool, {
+        userId,
+        email: currentUserCredential.email,
+        purpose: 'ACCOUNT_SENSITIVE_CHANGE',
+        targetValue: email,
+        code: currentEmailCode,
+      });
+
+      if (!currentCodeValid) {
+        return NextResponse.json(
+          { error: 'Invalid or expired current-email verification code' },
+          { status: 400 }
+        );
+      }
+
+      const newCodeValid = await verifyAndConsumeSecurityCode(pool, {
+        userId,
+        email,
+        purpose: 'EMAIL_VERIFICATION',
+        targetValue: 'EMAIL_CHANGE',
+        code: newEmailCode,
+      });
+
+      if (!newCodeValid) {
+        return NextResponse.json(
+          { error: 'Invalid or expired new-email verification code' },
+          { status: 400 }
+        );
+      }
+    }
+
+    const nextPasswordHash = passwordChangeRequested
+      ? await hashPassword(newPassword)
+      : currentUserCredential.password_hash;
+
+    const [updateResult] = await pool.query<ResultSetHeader>(
       `UPDATE users
       SET name = ?,
           surname = ?,
           gender = ?,
           age = ?,
           email = ?,
+          password_hash = ?,
           phone = ?,
           updated_at = NOW()
       WHERE user_id = ?`,
@@ -358,6 +482,7 @@ export async function PUT(
         gender,
         age,
         email,
+        nextPasswordHash,
         phone || null,
         userId,
       ]
@@ -372,9 +497,65 @@ export async function PUT(
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
+    if (isSensitiveUpdate) {
+      try {
+        await ensureNotificationTables(pool);
+        await createNotification(pool, {
+          userId,
+          type: 'ACCOUNT_SECURITY_UPDATED',
+          title: 'Account security updated',
+          message: emailChanged
+            ? 'Your email/password information was changed successfully.'
+            : 'Your password was changed successfully.',
+          actionUrl: '/aboutme',
+        });
+      } catch (notificationError) {
+        console.error('Unable to create account security notification:', notificationError);
+      }
+
+      if (isBrevoMailConfigured()) {
+        try {
+          await sendTransactionalEmail({
+            to: currentUserCredential.email,
+            subject: 'Park:D account security updated',
+            html: `
+              <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
+                <h2 style="margin:0 0 12px 0">Security update completed</h2>
+                <p>Hello ${currentUserCredential.username},</p>
+                <p>Your Park:D account security settings were changed.</p>
+                <p>Changed items: ${emailChanged ? 'email and/or password' : 'password'}.</p>
+              </div>
+            `,
+            text: `Your Park:D account security settings were changed.`,
+          });
+        } catch (mailError) {
+          console.error('Unable to send security update email:', mailError);
+        }
+
+        if (emailChanged && email !== currentUserCredential.email.toLowerCase()) {
+          try {
+            await sendTransactionalEmail({
+              to: email,
+              subject: 'Park:D email change confirmed',
+              html: `
+                <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
+                  <h2 style="margin:0 0 12px 0">Email updated</h2>
+                  <p>Hello ${currentUserCredential.username},</p>
+                  <p>This email is now linked to your Park:D account.</p>
+                </div>
+              `,
+              text: `This email is now linked to your Park:D account.`,
+            });
+          } catch (mailError) {
+            console.error('Unable to send new email confirmation:', mailError);
+          }
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      message: 'Profile updated',
+      message: isEmailVerificationRequired ? 'Profile updated with email verification' : 'Profile updated',
       user: buildUserResponse(updatedUser),
     });
   } catch (error) {
@@ -548,6 +729,26 @@ export async function PATCH(
         console.error('Unable to create owner approval notification:', notificationError);
       }
 
+      if (updatedUser && isBrevoMailConfigured()) {
+        try {
+          await sendTransactionalEmail({
+            to: updatedUser.email,
+            subject: 'Park:D owner request approved',
+            html: `
+              <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
+                <h2 style="margin:0 0 12px 0">Owner request approved</h2>
+                <p>Hello ${updatedUser.username},</p>
+                <p>Your owner request has been approved by admin.</p>
+                <p>Please sign out and sign in again to refresh owner permissions.</p>
+              </div>
+            `,
+            text: `Your owner request has been approved. Please sign out and sign in again.`,
+          });
+        } catch (mailError) {
+          console.error('Unable to send owner approval email:', mailError);
+        }
+      }
+
       return NextResponse.json({
         success: true,
         message: 'Owner request approved',
@@ -581,6 +782,26 @@ export async function PATCH(
       });
     } catch (notificationError) {
       console.error('Unable to create owner rejection notification:', notificationError);
+    }
+
+    if (updatedUser && isBrevoMailConfigured()) {
+      try {
+        await sendTransactionalEmail({
+          to: updatedUser.email,
+          subject: 'Park:D owner request rejected',
+          html: `
+            <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
+              <h2 style="margin:0 0 12px 0">Owner request rejected</h2>
+              <p>Hello ${updatedUser.username},</p>
+              <p>Your owner request was rejected by admin.</p>
+              <p>You can edit your details and submit a new owner request.</p>
+            </div>
+          `,
+          text: `Your owner request was rejected by admin. You can edit and submit a new request.`,
+        });
+      } catch (mailError) {
+        console.error('Unable to send owner rejection email:', mailError);
+      }
     }
 
     return NextResponse.json({

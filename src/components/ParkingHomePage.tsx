@@ -290,7 +290,7 @@ export default function ParkingHomePage({
                   )}
                   <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-900/25 via-transparent to-white/10"></div>
                   <div className="absolute left-4 top-4 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm backdrop-blur-sm">
-                    {lot.mapEmbedUrl ? 'OpenStreetMap' : 'Map Unavailable'}
+                    {lot.mapEmbedUrl ? 'Google Maps' : 'Map Unavailable'}
                   </div>
                   {showPrice ? (
                     <div className="absolute right-4 top-4 rounded-full bg-white/90 px-4 py-2 shadow-md backdrop-blur-sm">

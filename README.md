@@ -16,7 +16,7 @@ Park-D is a Next.js parking platform prototype with live flows for:
 - MySQL (`mysql2`)
 - JWT auth (`jsonwebtoken`) + password hashing (`bcryptjs`)
 - S3-compatible storage (`@aws-sdk/client-s3`) for proof/profile images
-- Leaflet map picker (`leaflet`)
+- Google Maps JavaScript API + Geocoding API
 - Docker / Docker Compose
 
 ## Prerequisites
@@ -55,6 +55,16 @@ DB_PASSWORD=your-db-password
 DB_NAME=your-db-name
 DB_SSL=true
 
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your-google-maps-api-key
+
+BREVO_API_KEY=your-brevo-api-key
+BREVO_SENDER_EMAIL=no-reply@your-domain.com
+BREVO_SENDER_NAME=Park:D
+# Optional Brevo endpoint/retry tuning
+# BREVO_API_URL=https://api.brevo.com/v3/smtp/email
+# BREVO_SEND_RETRY_COUNT=2
+# BREVO_SEND_TIMEOUT_MS=15000
+
 AWS_S3_BUCKET_NAME=your-bucket
 AWS_ENDPOINT_URL=https://your-s3-endpoint
 AWS_ACCESS_KEY_ID=your-key
@@ -75,6 +85,15 @@ Notes:
 
 - `.env.example` currently does not list `AWS_*` variables yet.
 - Without `AWS_*`, proof/profile image endpoints will fail.
+- `BREVO_*` is required for:
+  - registration confirmation email
+  - forgot-password code
+  - verification code for email/password changes
+  - owner request approval/rejection email
+  - selected in-app notifications (payment review / checkout review)
+- If Brevo returns temporary transport/SSL errors, the mail client now retries and falls back to Brevo legacy endpoint automatically.
+- `APP_BASE_URL` is optional. Set it only if you want clickable action links in notification emails.
+- `SECURITY_CODE_PEPPER` is optional. If unset, the app falls back to `JWT_SECRET`.
 
 ## Run Locally
 
@@ -116,7 +135,7 @@ docker run -p 3000:3000 --env-file .env park-d-nextjs
 - `/owner/parkingspace` create lot request
 - `/owner/parkingmanage` manage lot
 - `/admin` admin control center
-- `/login`, `/register`
+- `/login`, `/register`, `/verify-email`, `/forgot-password`
 - `/user/home` redirect to `/`
 
 ## Main API Groups

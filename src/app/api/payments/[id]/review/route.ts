@@ -4,7 +4,7 @@ import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { ensureUserWallet, ensureWalletTables } from '@/lib/wallet';
 import {
-  createNotifications,
+  createNotificationsWithDelivery,
   ensureNotificationTables,
 } from '@/lib/notifications';
 
@@ -257,13 +257,16 @@ export async function PATCH(
               : 'Payment approved. Booking is now confirmed.'
             : 'Payment was denied by admin.';
 
-        await createNotifications(pool, [
+        await createNotificationsWithDelivery(pool, [
           {
             userId: Number(payment.user_id),
             type: 'PAYMENT_REVIEWED',
             title: action === 'APPROVE' ? 'Payment approved' : 'Payment denied',
             message: renterMessage,
             actionUrl: `/booking-history/${payment.b_id}`,
+            sendEmail: true,
+            emailSubject:
+              action === 'APPROVE' ? 'Park:D payment approved' : 'Park:D payment denied',
           },
           {
             userId: Number(payment.owner_user_id),
@@ -271,6 +274,11 @@ export async function PATCH(
             title: action === 'APPROVE' ? 'Booking payment approved' : 'Booking payment denied',
             message: ownerMessage,
             actionUrl: '/owner/home',
+            sendEmail: true,
+            emailSubject:
+              action === 'APPROVE'
+                ? 'Park:D booking payment approved'
+                : 'Park:D booking payment denied',
           },
         ]);
       } catch (notificationError) {
