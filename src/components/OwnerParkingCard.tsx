@@ -7,6 +7,7 @@ interface OwnerParkingProps {
   name: string;
   status: ParkingStatus;
   onManage?: (id: string) => void;
+  onOpen?: (id: string) => void;
 }
 
 const STATUS_CONFIG: Record<ParkingStatus, { label: string; dotColor: string; textColor: string }> = {
@@ -32,11 +33,31 @@ const STATUS_CONFIG: Record<ParkingStatus, { label: string; dotColor: string; te
   },
 };
 
-export default function OwnerParkingCard({ id, name, status, onManage }: OwnerParkingProps) {
+export default function OwnerParkingCard({ id, name, status, onManage, onOpen }: OwnerParkingProps) {
   const config = STATUS_CONFIG[status];
+  const isClickable = typeof onOpen === 'function';
 
   return (
-    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 p-5 bg-gray-50 rounded-xl shadow-sm hover:shadow-md transition-all duration-200">
+    <div
+      role={isClickable ? 'button' : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      onClick={() => {
+        onOpen?.(id);
+      }}
+      onKeyDown={(event) => {
+        if (!isClickable) {
+          return;
+        }
+
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onOpen?.(id);
+        }
+      }}
+      className={`flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 p-5 bg-gray-50 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 ${
+        isClickable ? 'cursor-pointer' : ''
+      }`}
+    >
       <div className="flex items-center gap-4 flex-1">
         <div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center flex-shrink-0">
           <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -54,7 +75,10 @@ export default function OwnerParkingCard({ id, name, status, onManage }: OwnerPa
       </div>
 
       <button
-        onClick={() => onManage?.(id)}
+        onClick={(event) => {
+          event.stopPropagation();
+          onManage?.(id);
+        }}
         className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-100 hover:border-gray-300 transition-all duration-200"
       >
         <PencilIcon className="w-4 h-4" />

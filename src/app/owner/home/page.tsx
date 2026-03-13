@@ -760,6 +760,9 @@ export default function OwnerPage() {
                   id={String(lot.id)}
                   name={lot.name}
                   status={mapParkingStatus(lot.status)}
+                  onOpen={(lotId) => {
+                    router.push(`/parkingdetail/${lotId}`);
+                  }}
                   onManage={(lotId) => {
                     router.push(`/owner/parkingmanage?lotId=${lotId}`);
                   }}
@@ -789,6 +792,9 @@ export default function OwnerPage() {
                   id={String(lot.id)}
                   name={lot.name}
                   status="pending"
+                  onOpen={(lotId) => {
+                    router.push(`/parkingdetail/${lotId}`);
+                  }}
                   onManage={(lotId) => {
                     router.push(`/owner/parkingmanage?lotId=${lotId}`);
                   }}
