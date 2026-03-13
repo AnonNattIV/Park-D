@@ -56,6 +56,8 @@ DB_NAME=your-db-name
 DB_SSL=true
 
 NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your-google-maps-api-key
+# Optional server key for Places API (preferred over NEXT_PUBLIC key on server)
+GOOGLE_PLACES_API_KEY=your-google-places-api-key
 
 BREVO_API_KEY=your-brevo-api-key
 BREVO_SENDER_EMAIL=no-reply@your-domain.com
@@ -94,6 +96,7 @@ Notes:
 - If Brevo returns temporary transport/SSL errors, the mail client now retries and falls back to Brevo legacy endpoint automatically.
 - `APP_BASE_URL` is optional. Set it only if you want clickable action links in notification emails.
 - `SECURITY_CODE_PEPPER` is optional. If unset, the app falls back to `JWT_SECRET`.
+- `GOOGLE_PLACES_API_KEY` is optional but recommended. If missing, server location normalization falls back to `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
 
 ## Run Locally
 
@@ -153,6 +156,26 @@ docker run -p 3000:3000 --env-file .env park-d-nextjs
 - Protected APIs require `Authorization: Bearer <token>`.
 - Wallet and settlement support tables are created lazily at runtime if missing.
 - Checkout automation is triggered from request handlers, not a separate scheduler service.
+
+## Location Normalization
+
+Parking-lot location input uses two layers of data:
+
+- Raw input fields (source of truth): exactly what owner typed in form fields (`name`, `address`, `house number`, district/amphoe/subdistrict/province, GPS).
+- Normalized fields (canonical): resolved in backend with Google Places API (New), stored separately in `parking_lot_metadata`.
+
+Key behavior:
+
+- Raw form values are never overwritten by translation/normalization.
+- Places is attempted first using raw user text and optional GPS coordinates.
+- Translation is only fallback support when Places cannot confidently resolve.
+- Raw and normalized records are both stored, so UI keeps user-entered values while search/display can use normalized fields.
+
+Main env vars for this flow:
+
+- `GOOGLE_PLACES_API_KEY` (recommended server key)
+- `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` (map UI key, fallback for server Places if needed)
+- `GOOGLE_TRANSLATE_API_KEY` (optional fallback language detection/translation support)
 
 ## Documentation
 

@@ -1,10 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { listParkingLotSystemRows } from '@/lib/parking-lots';
 import { ensureParkingLotMetadataSchema } from '@/lib/parking-lot-metadata';
-import { translateTextsToEnglish, translateTextsToThai } from '@/lib/translation-api';
+import {
+  buildLocationMetadataDbPayload,
+  buildNormalizedLocationLabel,
+  LocationNormalizationService,
+} from '@/lib/location-normalization';
 import {
   deleteParkingLotEvidenceByUrl,
   deleteParkingLotImageByUrl,
@@ -27,6 +31,50 @@ const MAX_IMAGE_FILES = 5;
 const MAX_IMAGE_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_EVIDENCE_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
+const METADATA_LOCATION_COLUMNS = [
+  'raw_name',
+  'raw_address',
+  'raw_house_number',
+  'raw_district',
+  'raw_amphoe',
+  'raw_subdistrict',
+  'raw_province',
+  'raw_latitude',
+  'raw_longitude',
+  'raw_input_lang',
+  'place_id',
+  'normalized_name_en',
+  'normalized_name_th',
+  'normalized_address_en',
+  'normalized_address_th',
+  'normalized_house_number',
+  'normalized_district_en',
+  'normalized_district_th',
+  'normalized_amphoe_en',
+  'normalized_amphoe_th',
+  'normalized_subdistrict_en',
+  'normalized_subdistrict_th',
+  'normalized_province_en',
+  'normalized_province_th',
+  'normalized_country_code',
+  'normalized_latitude',
+  'normalized_longitude',
+  'resolution_status',
+  'resolution_source',
+  'confidence_score',
+  'is_fallback_translation',
+  'display_lot_name_th',
+  'display_location_th',
+  'display_address_line_th',
+  'display_street_number_th',
+  'display_district_th',
+  'display_amphoe_th',
+  'display_subdistrict_th',
+  'display_province_th',
+] as const;
+
+type MetadataLocationColumn = (typeof METADATA_LOCATION_COLUMNS)[number];
+
 type CreateParkingLotPayload = {
   lotName: string;
   addressLine: string;
@@ -46,14 +94,7 @@ type CreateParkingLotPayload = {
   ownershipEvidenceFile: File | null;
 };
 
-function buildLocationLabel({
-  addressLine,
-  streetNumber,
-  district,
-  amphoe,
-  subdistrict,
-  province,
-}: {
+function buildRawLocationLabel(payload: {
   addressLine: string;
   streetNumber: string;
   district: string;
@@ -61,18 +102,14 @@ function buildLocationLabel({
   subdistrict: string;
   province: string;
 }): string {
-  const segments = [
-    addressLine,
-    streetNumber,
-    subdistrict,
-    district,
-    amphoe,
-    province,
-  ]
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  return segments.join(', ');
+  return buildNormalizedLocationLabel([
+    payload.addressLine,
+    payload.streetNumber,
+    payload.subdistrict,
+    payload.district,
+    payload.amphoe,
+    payload.province,
+  ]);
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -134,8 +171,8 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.from(uniqueValues);
 }
 
-function readFormString(value: FormDataEntryValue | null): string {
-  return typeof value === 'string' ? value.trim() : '';
+function readFormStringRaw(value: FormDataEntryValue | null): string {
+  return typeof value === 'string' ? value : '';
 }
 
 function readFormNumber(value: FormDataEntryValue | null): number {
@@ -200,13 +237,13 @@ async function readCreateParkingLotPayload(
   if (contentType.includes('multipart/form-data')) {
     const formData = await request.formData();
     return {
-      lotName: readFormString(formData.get('lotName')),
-      addressLine: readFormString(formData.get('addressLine')),
-      streetNumber: readFormString(formData.get('streetNumber')),
-      district: readFormString(formData.get('district')),
-      amphoe: readFormString(formData.get('amphoe')),
-      subdistrict: readFormString(formData.get('subdistrict')),
-      province: readFormString(formData.get('province')),
+      lotName: readFormStringRaw(formData.get('lotName')),
+      addressLine: readFormStringRaw(formData.get('addressLine')),
+      streetNumber: readFormStringRaw(formData.get('streetNumber')),
+      district: readFormStringRaw(formData.get('district')),
+      amphoe: readFormStringRaw(formData.get('amphoe')),
+      subdistrict: readFormStringRaw(formData.get('subdistrict')),
+      province: readFormStringRaw(formData.get('province')),
       latitude: (() => {
         const value = formData.get('latitude');
         if (value === null || value === '') {
@@ -223,7 +260,7 @@ async function readCreateParkingLotPayload(
         const parsed = readFormNumber(value);
         return Number.isFinite(parsed) ? parsed : Number.NaN;
       })(),
-      description: readFormString(formData.get('description')),
+      description: readFormStringRaw(formData.get('description')),
       vehicleTypes: normalizeStringArray(formData.get('vehicleTypes')),
       rules: normalizeStringArray(formData.get('rules')),
       totalSlot: readFormNumber(formData.get('totalSlot')),
@@ -235,13 +272,13 @@ async function readCreateParkingLotPayload(
 
   const body = await request.json();
   return {
-    lotName: typeof body?.lotName === 'string' ? body.lotName.trim() : '',
-    addressLine: typeof body?.addressLine === 'string' ? body.addressLine.trim() : '',
-    streetNumber: typeof body?.streetNumber === 'string' ? body.streetNumber.trim() : '',
-    district: typeof body?.district === 'string' ? body.district.trim() : '',
-    amphoe: typeof body?.amphoe === 'string' ? body.amphoe.trim() : '',
-    subdistrict: typeof body?.subdistrict === 'string' ? body.subdistrict.trim() : '',
-    province: typeof body?.province === 'string' ? body.province.trim() : '',
+    lotName: typeof body?.lotName === 'string' ? body.lotName : '',
+    addressLine: typeof body?.addressLine === 'string' ? body.addressLine : '',
+    streetNumber: typeof body?.streetNumber === 'string' ? body.streetNumber : '',
+    district: typeof body?.district === 'string' ? body.district : '',
+    amphoe: typeof body?.amphoe === 'string' ? body.amphoe : '',
+    subdistrict: typeof body?.subdistrict === 'string' ? body.subdistrict : '',
+    province: typeof body?.province === 'string' ? body.province : '',
     latitude:
       body?.latitude === null || body?.latitude === undefined || body?.latitude === ''
         ? null
@@ -250,7 +287,7 @@ async function readCreateParkingLotPayload(
       body?.longitude === null || body?.longitude === undefined || body?.longitude === ''
         ? null
         : Number(body.longitude),
-    description: typeof body?.description === 'string' ? body.description.trim() : '',
+    description: typeof body?.description === 'string' ? body.description : '',
     vehicleTypes: normalizeStringArray(body?.vehicleTypes),
     rules: normalizeStringArray(body?.rules),
     totalSlot: Number(body?.totalSlot),
@@ -294,38 +331,30 @@ export async function POST(request: NextRequest) {
     }
 
     const payload = await readCreateParkingLotPayload(request);
-    const lotName = payload.lotName;
-    const addressLine = payload.addressLine;
-    const streetNumber = payload.streetNumber;
-    const district = payload.district;
-    const amphoe = payload.amphoe;
-    const subdistrict = payload.subdistrict;
-    const province = payload.province;
+    const lotNameRaw = payload.lotName;
+    const addressLineRaw = payload.addressLine;
+    const streetNumberRaw = payload.streetNumber;
+    const districtRaw = payload.district;
+    const amphoeRaw = payload.amphoe;
+    const subdistrictRaw = payload.subdistrict;
+    const provinceRaw = payload.province;
     const rawLatitude = payload.latitude;
     const rawLongitude = payload.longitude;
-    const description = payload.description;
+    const descriptionRaw = payload.description;
     const vehicleTypes = payload.vehicleTypes;
     const rules = payload.rules;
     const totalSlotRaw = payload.totalSlot;
     const priceRaw = payload.price;
     const imageFiles = payload.imageFiles;
     const ownershipEvidenceFile = payload.ownershipEvidenceFile;
-    const lotNameEn = lotName;
-    let addressLineEn = '';
-    let streetNumberEn = '';
-    let districtEn = '';
-    let amphoeEn = '';
-    let subdistrictEn = '';
-    let provinceEn = '';
-    const lotNameTh = lotName;
-    let addressLineTh = '';
-    let streetNumberTh = '';
-    let districtTh = '';
-    let amphoeTh = '';
-    let subdistrictTh = '';
-    let provinceTh = '';
-    let location = '';
-    let locationTh = '';
+
+    const lotName = lotNameRaw.trim();
+    const addressLine = addressLineRaw.trim();
+    const streetNumber = streetNumberRaw.trim();
+    const district = districtRaw.trim();
+    const amphoe = amphoeRaw.trim();
+    const subdistrict = subdistrictRaw.trim();
+    const province = provinceRaw.trim();
 
     if (!lotName) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
@@ -437,56 +466,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    [
-      addressLineEn,
-      streetNumberEn,
-      districtEn,
-      amphoeEn,
-      subdistrictEn,
-      provinceEn,
-    ] = await translateTextsToEnglish([
-      addressLine,
-      streetNumber,
-      district,
-      amphoe,
-      subdistrict,
-      province,
-    ]);
-
-    [
-      addressLineTh,
-      streetNumberTh,
-      districtTh,
-      amphoeTh,
-      subdistrictTh,
-      provinceTh,
-    ] = await translateTextsToThai([
-      addressLine,
-      streetNumber,
-      district,
-      amphoe,
-      subdistrict,
-      province,
-    ]);
-
-    location = buildLocationLabel({
-      addressLine: addressLineEn,
-      streetNumber: streetNumberEn,
-      district: districtEn,
-      amphoe: amphoeEn,
-      subdistrict: subdistrictEn,
-      province: provinceEn,
-    });
-    locationTh = buildLocationLabel({
-      addressLine: addressLineTh,
-      streetNumber: streetNumberTh,
-      district: districtTh,
-      amphoe: amphoeTh,
-      subdistrict: subdistrictTh,
-      province: provinceTh,
+    const rawLocation = buildRawLocationLabel({
+      addressLine: addressLineRaw,
+      streetNumber: streetNumberRaw,
+      district: districtRaw,
+      amphoe: amphoeRaw,
+      subdistrict: subdistrictRaw,
+      province: provinceRaw,
     });
 
-    if (!location) {
+    if (!rawLocation) {
       return NextResponse.json(
         { error: 'Unable to build location from address fields' },
         { status: 400 }
@@ -508,6 +497,19 @@ export async function POST(request: NextRequest) {
         { status: 403 }
       );
     }
+
+    const normalizer = new LocationNormalizationService();
+    const normalizationResult = await normalizer.normalize({
+      name: lotNameRaw,
+      address: addressLineRaw,
+      houseNumber: streetNumberRaw,
+      district: districtRaw,
+      amphoe: amphoeRaw,
+      subdistrict: subdistrictRaw,
+      province: provinceRaw,
+      latitude: rawLatitude,
+      longitude: rawLongitude,
+    });
 
     const [insertResult] = await pool.query<ResultSetHeader>(
       `INSERT INTO parking_lots (
@@ -533,15 +535,15 @@ export async function POST(request: NextRequest) {
       VALUES (?, ?, ?, 0, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         requester.userId,
-        lotNameEn || null,
-        description || null,
-        location,
-        addressLineEn || null,
-        streetNumberEn || null,
-        districtEn || null,
-        amphoeEn || null,
-        subdistrictEn || null,
-        provinceEn || null,
+        lotNameRaw || null,
+        descriptionRaw || null,
+        rawLocation,
+        addressLineRaw || null,
+        streetNumberRaw || null,
+        districtRaw || null,
+        amphoeRaw || null,
+        subdistrictRaw || null,
+        provinceRaw || null,
         rawLatitude,
         rawLongitude,
         totalSlotRaw,
@@ -589,6 +591,16 @@ export async function POST(request: NextRequest) {
 
     try {
       await ensureParkingLotMetadataSchema();
+
+      const metadataLocationPayload = buildLocationMetadataDbPayload(
+        lotNameRaw,
+        normalizationResult
+      );
+
+      const metadataLocationValues = METADATA_LOCATION_COLUMNS.map(
+        (column) => metadataLocationPayload[column as MetadataLocationColumn]
+      );
+
       await pool.query(
         `INSERT INTO parking_lot_metadata (
           lot_id,
@@ -596,29 +608,15 @@ export async function POST(request: NextRequest) {
           rules_json,
           image_urls_json,
           owner_evidence_url,
-          display_lot_name_th,
-          display_location_th,
-          display_address_line_th,
-          display_street_number_th,
-          display_district_th,
-          display_amphoe_th,
-          display_subdistrict_th,
-          display_province_th
+          ${METADATA_LOCATION_COLUMNS.join(',\n          ')}
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ${METADATA_LOCATION_COLUMNS.map(() => '?').join(', ')})
         ON DUPLICATE KEY UPDATE
           vehicle_types_json = VALUES(vehicle_types_json),
           rules_json = VALUES(rules_json),
           image_urls_json = VALUES(image_urls_json),
           owner_evidence_url = VALUES(owner_evidence_url),
-          display_lot_name_th = VALUES(display_lot_name_th),
-          display_location_th = VALUES(display_location_th),
-          display_address_line_th = VALUES(display_address_line_th),
-          display_street_number_th = VALUES(display_street_number_th),
-          display_district_th = VALUES(display_district_th),
-          display_amphoe_th = VALUES(display_amphoe_th),
-          display_subdistrict_th = VALUES(display_subdistrict_th),
-          display_province_th = VALUES(display_province_th),
+          ${METADATA_LOCATION_COLUMNS.map((column) => `${column} = VALUES(${column})`).join(',\n          ')},
           updated_at = CURRENT_TIMESTAMP`,
         [
           insertResult.insertId,
@@ -626,14 +624,7 @@ export async function POST(request: NextRequest) {
           rules.length > 0 ? JSON.stringify(rules) : null,
           uploadedImageUrls.length > 0 ? JSON.stringify(uploadedImageUrls) : null,
           uploadedEvidenceUrl,
-          lotNameTh || null,
-          locationTh || null,
-          addressLineTh || null,
-          streetNumberTh || null,
-          districtTh || null,
-          amphoeTh || null,
-          subdistrictTh || null,
-          provinceTh || null,
+          ...metadataLocationValues,
         ]
       );
     } catch (metadataError) {

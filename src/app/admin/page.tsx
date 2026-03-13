@@ -236,6 +236,7 @@ export default function AdminHomePage() {
   const [bookingFilterStatus, setBookingFilterStatus] = useState('ALL');
   const [bookingSortBy, setBookingSortBy] = useState('created_at');
   const [bookingOrder, setBookingOrder] = useState('desc');
+  const [bookingRenterSearch, setBookingRenterSearch] = useState('');
   const [bookingLoadError, setBookingLoadError] = useState('');
 
   const [usersList, setUsersList] = useState<UserManagementItem[]>([]);
@@ -244,6 +245,7 @@ export default function AdminHomePage() {
   const [userActionError, setUserActionError] = useState('');
   const [userActionMessage, setUserActionMessage] = useState('');
   const [processingUserId, setProcessingUserId] = useState<number | null>(null);
+  const [userSearchTerm, setUserSearchTerm] = useState('');
 
   useEffect(() => {
     const storedToken = readStoredToken();
@@ -445,7 +447,7 @@ export default function AdminHomePage() {
       void loadBookings();
     }
     if (activeMenu === 'users') void loadUsersList();
-  }, [activeMenu, loadBookings, bookingFilterStatus, bookingSortBy, bookingOrder]);
+  }, [activeMenu, loadBookings, loadUsersList]);
 
   const handleLogout = () => {
     clearStoredAuth();
@@ -688,6 +690,46 @@ export default function AdminHomePage() {
         .length,
     [paymentApprovals]
   );
+
+  const filteredBookings = useMemo(() => {
+    const search = bookingRenterSearch.trim().toLowerCase();
+    if (!search) {
+      return bookings;
+    }
+
+    return bookings.filter((booking) => {
+      const fullName = `${booking.renterFirstName || ''} ${booking.renterLastName || ''}`.trim();
+      const searchable = [
+        booking.renterUsername || '',
+        booking.renterFirstName || '',
+        booking.renterLastName || '',
+        fullName,
+      ];
+
+      return searchable.some((value) => value.toLowerCase().includes(search));
+    });
+  }, [bookings, bookingRenterSearch]);
+
+  const filteredUsersList = useMemo(() => {
+    const search = userSearchTerm.trim().toLowerCase();
+    if (!search) {
+      return usersList;
+    }
+
+    return usersList.filter((userItem) => {
+      const fullName = `${userItem.f_name || ''} ${userItem.l_name || ''}`.trim();
+      const searchable = [
+        userItem.username || '',
+        userItem.email || '',
+        userItem.role || '',
+        userItem.f_name || '',
+        userItem.l_name || '',
+        fullName,
+      ];
+
+      return searchable.some((value) => value.toLowerCase().includes(search));
+    });
+  }, [usersList, userSearchTerm]);
 
   if (!isReady || !user) {
     return <div className="min-h-screen bg-slate-50" />;
@@ -1166,6 +1208,13 @@ export default function AdminHomePage() {
                 <p className="text-sm text-slate-500">Monitor all platform bookings</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={bookingRenterSearch}
+                  onChange={(e) => setBookingRenterSearch(e.target.value)}
+                  placeholder="Search renter (username/name)"
+                  className="w-64 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                />
               <select 
                   value={bookingFilterStatus}
                   onChange={(e) => setBookingFilterStatus(e.target.value)}
@@ -1213,11 +1262,11 @@ export default function AdminHomePage() {
 
             {isBookingLoading ? (
               <p className="py-8 text-center text-sm text-slate-500">Loading booking history...</p>
-            ) : bookings.length === 0 ? (
+            ) : filteredBookings.length === 0 ? (
               <p className="py-8 text-center text-sm text-slate-500">No bookings match your criteria.</p>
             ) : (
               <div className="space-y-3">
-                {bookings.map((booking) => (
+                {filteredBookings.map((booking) => (
                   <article key={booking.id} className="rounded-xl border border-slate-200 p-4 hover:shadow-sm transition">
                     <div className="grid gap-4 md:grid-cols-[2fr_1.5fr_1fr] md:items-center">
                       <div>
@@ -1266,14 +1315,23 @@ export default function AdminHomePage() {
                 <h2 className="text-lg font-bold text-slate-800">User Management</h2>
                 <p className="text-sm text-slate-500">Manage user access, suspend, or ban accounts</p>
               </div>
-              <button
-                type="button"
-                onClick={() => void loadUsersList()}
-                disabled={isUserLoading}
-                className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-70"
-              >
-                {isUserLoading ? 'Loading...' : 'Refresh'}
-              </button>
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                <input
+                  type="text"
+                  value={userSearchTerm}
+                  onChange={(e) => setUserSearchTerm(e.target.value)}
+                  placeholder="Search user (name/username/email)"
+                  className="sm:w-72 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => void loadUsersList()}
+                  disabled={isUserLoading}
+                  className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-70"
+                >
+                  {isUserLoading ? 'Loading...' : 'Refresh'}
+                </button>
+              </div>
             </div>
 
             {userLoadError ? (
@@ -1288,11 +1346,11 @@ export default function AdminHomePage() {
 
             {isUserLoading ? (
               <p className="py-8 text-center text-sm text-slate-500">Loading users...</p>
-            ) : usersList.length === 0 ? (
+            ) : filteredUsersList.length === 0 ? (
               <p className="py-8 text-center text-sm text-slate-500">No users found.</p>
             ) : (
               <div className="space-y-3">
-                {usersList.map((userItem) => {
+                {filteredUsersList.map((userItem) => {
                   const isProcessing = processingUserId === userItem.id;
 
                   return (

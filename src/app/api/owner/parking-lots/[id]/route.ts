@@ -3,7 +3,11 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { verifyToken } from '@/lib/auth';
 import getPool from '@/lib/db/mysql';
 import { ensureParkingLotMetadataSchema } from '@/lib/parking-lot-metadata';
-import { translateTextsToEnglish, translateTextsToThai } from '@/lib/translation-api';
+import {
+  buildLocationMetadataDbPayload,
+  buildNormalizedLocationLabel,
+  LocationNormalizationService,
+} from '@/lib/location-normalization';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +41,50 @@ interface ParkingLotMetadataRow extends RowDataPacket {
   rules_json: unknown;
 }
 
+const METADATA_LOCATION_COLUMNS = [
+  'raw_name',
+  'raw_address',
+  'raw_house_number',
+  'raw_district',
+  'raw_amphoe',
+  'raw_subdistrict',
+  'raw_province',
+  'raw_latitude',
+  'raw_longitude',
+  'raw_input_lang',
+  'place_id',
+  'normalized_name_en',
+  'normalized_name_th',
+  'normalized_address_en',
+  'normalized_address_th',
+  'normalized_house_number',
+  'normalized_district_en',
+  'normalized_district_th',
+  'normalized_amphoe_en',
+  'normalized_amphoe_th',
+  'normalized_subdistrict_en',
+  'normalized_subdistrict_th',
+  'normalized_province_en',
+  'normalized_province_th',
+  'normalized_country_code',
+  'normalized_latitude',
+  'normalized_longitude',
+  'resolution_status',
+  'resolution_source',
+  'confidence_score',
+  'is_fallback_translation',
+  'display_lot_name_th',
+  'display_location_th',
+  'display_address_line_th',
+  'display_street_number_th',
+  'display_district_th',
+  'display_amphoe_th',
+  'display_subdistrict_th',
+  'display_province_th',
+] as const;
+
+type MetadataLocationColumn = (typeof METADATA_LOCATION_COLUMNS)[number];
+
 function readRequester(request: NextRequest): { userId: number; role: string } | null {
   const authorization = request.headers.get('authorization') || '';
   if (!authorization.startsWith('Bearer ')) {
@@ -68,14 +116,7 @@ function parseLotId(rawId: string): number | null {
   return lotId;
 }
 
-function buildLocationLabel({
-  addressLine,
-  streetNumber,
-  district,
-  amphoe,
-  subdistrict,
-  province,
-}: {
+function buildRawLocationLabel(payload: {
   addressLine: string;
   streetNumber: string;
   district: string;
@@ -83,37 +124,71 @@ function buildLocationLabel({
   subdistrict: string;
   province: string;
 }): string {
-  return [
-    addressLine,
-    streetNumber,
-    subdistrict,
-    district,
-    amphoe,
-    province,
-  ]
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .join(', ');
+  return buildNormalizedLocationLabel([
+    payload.addressLine,
+    payload.streetNumber,
+    payload.subdistrict,
+    payload.district,
+    payload.amphoe,
+    payload.province,
+  ]);
 }
 
 function normalizeStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
+  const uniqueValues = new Set<string>();
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => {
+      if (typeof item !== 'string') {
+        return;
+      }
+
+      const normalizedItem = item.trim();
+      if (!normalizedItem) {
+        return;
+      }
+
+      uniqueValues.add(normalizedItem);
+    });
+
+    return Array.from(uniqueValues);
   }
 
-  const uniqueValues = new Set<string>();
-  value.forEach((item) => {
-    if (typeof item !== 'string') {
-      return;
+  if (typeof value === 'string') {
+    const normalizedValue = value.trim();
+    if (!normalizedValue) {
+      return [];
     }
 
-    const normalizedItem = item.trim();
-    if (!normalizedItem) {
-      return;
+    try {
+      const parsed = JSON.parse(normalizedValue) as unknown;
+      if (Array.isArray(parsed)) {
+        parsed.forEach((item) => {
+          if (typeof item !== 'string') {
+            return;
+          }
+
+          const normalizedItem = item.trim();
+          if (!normalizedItem) {
+            return;
+          }
+
+          uniqueValues.add(normalizedItem);
+        });
+
+        return Array.from(uniqueValues);
+      }
+    } catch {
+      // fall back to comma/newline parser
     }
 
-    uniqueValues.add(normalizedItem);
-  });
+    normalizedValue
+      .split('\n')
+      .flatMap((line) => line.split(','))
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .forEach((item) => uniqueValues.add(item));
+  }
 
   return Array.from(uniqueValues);
 }
@@ -307,14 +382,14 @@ export async function PATCH(
 
     const body = await request.json();
 
-    const name = typeof body?.name === 'string' ? body.name.trim() : '';
-    const description = typeof body?.description === 'string' ? body.description.trim() : '';
-    const addressLine = typeof body?.addressLine === 'string' ? body.addressLine.trim() : '';
-    const streetNumber = typeof body?.streetNumber === 'string' ? body.streetNumber.trim() : '';
-    const district = typeof body?.district === 'string' ? body.district.trim() : '';
-    const amphoe = typeof body?.amphoe === 'string' ? body.amphoe.trim() : '';
-    const subdistrict = typeof body?.subdistrict === 'string' ? body.subdistrict.trim() : '';
-    const province = typeof body?.province === 'string' ? body.province.trim() : '';
+    const lotNameRaw = typeof body?.name === 'string' ? body.name : '';
+    const descriptionRaw = typeof body?.description === 'string' ? body.description : '';
+    const addressLineRaw = typeof body?.addressLine === 'string' ? body.addressLine : '';
+    const streetNumberRaw = typeof body?.streetNumber === 'string' ? body.streetNumber : '';
+    const districtRaw = typeof body?.district === 'string' ? body.district : '';
+    const amphoeRaw = typeof body?.amphoe === 'string' ? body.amphoe : '';
+    const subdistrictRaw = typeof body?.subdistrict === 'string' ? body.subdistrict : '';
+    const provinceRaw = typeof body?.province === 'string' ? body.province : '';
     const totalSlots = Number(body?.totalSlots);
     const price = Number(body?.price);
     const statusRaw = typeof body?.status === 'string' ? body.status.trim().toUpperCase() : '';
@@ -329,23 +404,16 @@ export async function PATCH(
         : Number(body.longitude);
     const vehicleTypes = normalizeStringArray(body?.vehicleTypes);
     const rules = normalizeStringArray(body?.rules);
-    const nameEn = name;
-    let addressLineEn = '';
-    let streetNumberEn = '';
-    let districtEn = '';
-    let amphoeEn = '';
-    let subdistrictEn = '';
-    let provinceEn = '';
-    const nameTh = name;
-    let addressLineTh = '';
-    let streetNumberTh = '';
-    let districtTh = '';
-    let amphoeTh = '';
-    let subdistrictTh = '';
-    let provinceTh = '';
-    let locationTh = '';
 
-    if (!name) {
+    const lotName = lotNameRaw.trim();
+    const addressLine = addressLineRaw.trim();
+    const streetNumber = streetNumberRaw.trim();
+    const district = districtRaw.trim();
+    const amphoe = amphoeRaw.trim();
+    const subdistrict = subdistrictRaw.trim();
+    const province = provinceRaw.trim();
+
+    if (!lotName) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
     }
 
@@ -374,7 +442,10 @@ export async function PATCH(
     }
 
     if (!Number.isInteger(totalSlots) || totalSlots <= 0) {
-      return NextResponse.json({ error: 'Total slots must be a positive integer' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Total slots must be a positive integer' },
+        { status: 400 }
+      );
     }
 
     if (!Number.isFinite(price) || price <= 0) {
@@ -400,52 +471,49 @@ export async function PATCH(
 
     if (rawLongitude !== null) {
       if (!Number.isFinite(rawLongitude) || rawLongitude < -180 || rawLongitude > 180) {
-        return NextResponse.json({ error: 'Longitude must be between -180 and 180' }, { status: 400 });
+        return NextResponse.json(
+          { error: 'Longitude must be between -180 and 180' },
+          { status: 400 }
+        );
       }
     }
 
-    [addressLineEn, streetNumberEn, districtEn, amphoeEn, subdistrictEn, provinceEn] =
-      await translateTextsToEnglish([
-        addressLine,
-        streetNumber,
-        district,
-        amphoe,
-        subdistrict,
-        province,
-      ]);
-    [addressLineTh, streetNumberTh, districtTh, amphoeTh, subdistrictTh, provinceTh] =
-      await translateTextsToThai([
-        addressLine,
-        streetNumber,
-        district,
-        amphoe,
-        subdistrict,
-        province,
-      ]);
-    locationTh = buildLocationLabel({
-      addressLine: addressLineTh,
-      streetNumber: streetNumberTh,
-      district: districtTh,
-      amphoe: amphoeTh,
-      subdistrict: subdistrictTh,
-      province: provinceTh,
+    const rawLocation = buildRawLocationLabel({
+      addressLine: addressLineRaw,
+      streetNumber: streetNumberRaw,
+      district: districtRaw,
+      amphoe: amphoeRaw,
+      subdistrict: subdistrictRaw,
+      province: provinceRaw,
     });
 
-    const location = buildLocationLabel({
-      addressLine: addressLineEn,
-      streetNumber: streetNumberEn,
-      district: districtEn,
-      amphoe: amphoeEn,
-      subdistrict: subdistrictEn,
-      province: provinceEn,
-    });
-
-    if (!location) {
+    if (!rawLocation) {
       return NextResponse.json(
         { error: 'Unable to build location from address fields' },
         { status: 400 }
       );
     }
+
+    const normalizer = new LocationNormalizationService();
+    const normalizationResult = await normalizer.normalize({
+      name: lotNameRaw,
+      address: addressLineRaw,
+      houseNumber: streetNumberRaw,
+      district: districtRaw,
+      amphoe: amphoeRaw,
+      subdistrict: subdistrictRaw,
+      province: provinceRaw,
+      latitude: rawLatitude,
+      longitude: rawLongitude,
+    });
+
+    const metadataLocationPayload = buildLocationMetadataDbPayload(
+      lotNameRaw,
+      normalizationResult
+    );
+    const metadataLocationValues = METADATA_LOCATION_COLUMNS.map(
+      (column) => metadataLocationPayload[column as MetadataLocationColumn]
+    );
 
     const pool = getPool();
     await pool.query(
@@ -469,15 +537,15 @@ export async function PATCH(
       WHERE lot_id = ?
       LIMIT 1`,
       [
-        nameEn,
-        description || null,
-        location,
-        addressLineEn,
-        streetNumberEn,
-        districtEn,
-        amphoeEn,
-        subdistrictEn,
-        provinceEn,
+        lotNameRaw || null,
+        descriptionRaw || null,
+        rawLocation,
+        addressLineRaw || null,
+        streetNumberRaw || null,
+        districtRaw || null,
+        amphoeRaw || null,
+        subdistrictRaw || null,
+        provinceRaw || null,
         rawLatitude,
         rawLongitude,
         totalSlots,
@@ -495,40 +563,19 @@ export async function PATCH(
           lot_id,
           vehicle_types_json,
           rules_json,
-          display_lot_name_th,
-          display_location_th,
-          display_address_line_th,
-          display_street_number_th,
-          display_district_th,
-          display_amphoe_th,
-          display_subdistrict_th,
-          display_province_th
+          ${METADATA_LOCATION_COLUMNS.join(',\n          ')}
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ${METADATA_LOCATION_COLUMNS.map(() => '?').join(', ')})
         ON DUPLICATE KEY UPDATE
           vehicle_types_json = VALUES(vehicle_types_json),
           rules_json = VALUES(rules_json),
-          display_lot_name_th = VALUES(display_lot_name_th),
-          display_location_th = VALUES(display_location_th),
-          display_address_line_th = VALUES(display_address_line_th),
-          display_street_number_th = VALUES(display_street_number_th),
-          display_district_th = VALUES(display_district_th),
-          display_amphoe_th = VALUES(display_amphoe_th),
-          display_subdistrict_th = VALUES(display_subdistrict_th),
-          display_province_th = VALUES(display_province_th),
+          ${METADATA_LOCATION_COLUMNS.map((column) => `${column} = VALUES(${column})`).join(',\n          ')},
           updated_at = CURRENT_TIMESTAMP`,
         [
           lotId,
           vehicleTypes.length > 0 ? JSON.stringify(vehicleTypes) : null,
           rules.length > 0 ? JSON.stringify(rules) : null,
-          nameTh || null,
-          locationTh || null,
-          addressLineTh || null,
-          streetNumberTh || null,
-          districtTh || null,
-          amphoeTh || null,
-          subdistrictTh || null,
-          provinceTh || null,
+          ...metadataLocationValues,
         ]
       );
     } catch (metadataError) {
