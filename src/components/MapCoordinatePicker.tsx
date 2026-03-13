@@ -68,8 +68,14 @@ export default function MapCoordinatePicker({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
+  const onChangeRef = useRef(onChange);
   const pinLockedRef = useRef(isPinLocked);
+  const [isMapReady, setIsMapReady] = useState(false);
   const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   useEffect(() => {
     pinLockedRef.current = isPinLocked;
@@ -105,14 +111,9 @@ export default function MapCoordinatePicker({
         return;
       }
 
-      const hasInitialPin = latitude !== null && longitude !== null;
-      const center = hasInitialPin
-        ? { lat: latitude as number, lng: longitude as number }
-        : { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] };
-
       const map = new window.google.maps.Map(containerRef.current, {
-        center,
-        zoom: hasInitialPin ? PIN_ZOOM : DEFAULT_ZOOM,
+        center: { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] },
+        zoom: DEFAULT_ZOOM,
         mapTypeControl: false,
         zoomControl: false,
         streetViewControl: false,
@@ -130,10 +131,11 @@ export default function MapCoordinatePicker({
           return;
         }
 
-        onChange(nextLat, nextLng);
+        onChangeRef.current(nextLat, nextLng);
       });
 
       mapRef.current = map;
+      setIsMapReady(true);
       setLoadError('');
     };
 
@@ -147,10 +149,10 @@ export default function MapCoordinatePicker({
       markerRef.current = null;
       mapRef.current = null;
     };
-  }, [latitude, longitude, onChange]);
+  }, []);
 
   useEffect(() => {
-    if (!mapRef.current || !window.google?.maps) {
+    if (!isMapReady || !mapRef.current || !window.google?.maps) {
       return;
     }
 
@@ -184,7 +186,7 @@ export default function MapCoordinatePicker({
           return;
         }
 
-        onChange(nextLat, nextLng);
+        onChangeRef.current(nextLat, nextLng);
       });
 
       markerRef.current = marker;
@@ -195,7 +197,7 @@ export default function MapCoordinatePicker({
 
     mapRef.current.setCenter(position);
     mapRef.current.setZoom(PIN_ZOOM);
-  }, [latitude, longitude, onChange, isPinLocked]);
+  }, [latitude, longitude, isPinLocked, isMapReady]);
 
   const changeZoom = (delta: number) => {
     if (!mapRef.current) {
