@@ -395,7 +395,7 @@ export default function ProfilePage() {
         }
 
         console.error('Profile load error:', error);
-        setLoadError('à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¹‚à¸«à¸¥à¸”à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹„à¸”à¹‰à¹ƒà¸™à¸•à¸­à¸™à¸™à¸µà¹‰');
+        setLoadError('Unable to load profile information right now.');
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -475,7 +475,7 @@ export default function ProfilePage() {
       }
 
       setFormData((prev) => ({ ...prev, avatar: result.imageUrl || null }));
-      setSuccessMessage('à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¸£à¸¹à¸›à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§');
+      setSuccessMessage('Profile image uploaded successfully.');
 
       const nextStoredUser: AuthUser = {
         ...authUser,
@@ -485,7 +485,7 @@ export default function ProfilePage() {
       updateStoredAuthUser(nextStoredUser);
     } catch (error) {
       console.error('Avatar upload error:', error);
-      setFormError('à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¸£à¸¹à¸›à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹„à¸”à¹‰');
+      setFormError('Unable to upload profile image.');
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
@@ -521,7 +521,7 @@ export default function ProfilePage() {
       }
 
       setFormData((prev) => ({ ...prev, avatar: null }));
-      setSuccessMessage('à¸¥à¸šà¸£à¸¹à¸›à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§');
+      setSuccessMessage('Profile image deleted successfully.');
 
       const nextStoredUser: AuthUser = {
         ...authUser,
@@ -531,7 +531,7 @@ export default function ProfilePage() {
       updateStoredAuthUser(nextStoredUser);
     } catch (error) {
       console.error('Avatar delete error:', error);
-      setFormError('à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸¥à¸šà¸£à¸¹à¸›à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹„à¸”à¹‰');
+      setFormError('Unable to delete profile image.');
     } finally {
       setIsDeletingImage(false);
       if (fileInputRef.current) {
@@ -885,12 +885,10 @@ export default function ProfilePage() {
       setNewEmailCode('');
       setIsCurrentEmailCodeChecked(false);
       setIsNewEmailCodeChecked(false);
-      setSuccessMessage('à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§');
+      setSuccessMessage('Profile updated successfully.');
     } catch (error) {
       console.error('Profile save error:', error);
-      setFormError(
-        error instanceof Error ? error.message : 'à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¹„à¸”à¹‰'
-      );
+      setFormError(error instanceof Error ? error.message : 'Unable to save profile.');
     } finally {
       setIsSaving(false);
     }
