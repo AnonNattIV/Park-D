@@ -1,6 +1,6 @@
 # Core secrets
-.gitsecret/keys/random_seed
-!*.secret
+.gitsecret/
+*.secret
 .env
 
 # Dependencies

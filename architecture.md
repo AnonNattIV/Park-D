@@ -1,266 +1,281 @@
 # Park-D Architecture (Current State)
 
-Last updated: 2026-03-08
+Last updated: 2026-03-13
 
 ## 1. Overview
 
-Park-D is a Next.js App Router application for:
+Park-D is a role-based parking web app with App Router APIs and direct MySQL integration.
 
-- public parking lot discovery
-- account registration/login
-- booking creation and payment-proof submission
-- renter check-in / checkout flow
-- owner and admin approval workflows
-- wallet-based settlement/refund records
+Main domains:
 
-The project is now beyond mock dashboards: owner/admin/booking/payment flows are connected to API routes and database state.
+- account/authentication and sensitive account changes
+- owner onboarding + lot request workflow
+- booking/payment/check-in/checkout lifecycle
+- settlement/refund ledger through wallet tables
+- admin moderation boards
 
 ## 2. Runtime Stack
 
-- Framework: Next.js 14 (`app` directory, standalone output)
-- Language: TypeScript (strict mode)
+- Framework: Next.js 14 (App Router)
+- Language: TypeScript
 - UI: React 18 + Tailwind CSS
-- Icons: `@heroicons/react`
-- Map UI: `leaflet`
-- Auth/security: `bcryptjs`, `jsonwebtoken`
-- Database driver: `mysql2/promise`
-- Object storage: `@aws-sdk/client-s3`
-- Image support: `sharp` (installed for Next.js production image pipeline)
-- Tooling: ESLint, PostCSS, Autoprefixer
-- Deployment: Docker multi-stage build + Docker Compose
+- Database access: `mysql2/promise`
+- Auth: JWT + bcrypt
+- Storage: S3-compatible object store via AWS SDK v3
+- Mail: Brevo API client wrapper
+- Maps: Leaflet on UI, Google APIs for place resolution/translation support
+- Tests: Node test runner via `tsx --test` for selected libs
 
-## 3. What To Install / Download
+## 3. What Must Be Installed
 
-### Local software
+Local tools:
 
 - Node.js 20+
 - npm
+- MySQL-compatible DB
 - Optional: Docker Desktop
 
-### JavaScript dependencies
+JS dependencies:
 
-Install with:
+- install with `npm ci` (preferred) or `npm install`
+- package list is pinned in `package.json` and `package-lock.json`
 
-- `npm ci` (preferred)
-- or `npm install`
+External services:
 
-### External services
+- MySQL instance
+- S3-compatible bucket
+- Brevo API account/key
+- Google Maps key (and optionally Places + Translate keys)
 
-- MySQL-compatible database
-- S3-compatible object storage bucket (profile/payment/check-in proof files)
-- Internet access for OpenStreetMap tiles and Nominatim geocoding used by the map picker
+## 4. High-Level Components
 
-## 4. Environment Variables
+Frontend pages (`src/app/**/page.tsx`):
 
-Required by auth + DB:
+- renter pages: home, lot detail, booking, booking history, profile, notifications
+- owner pages: owner home, lot create/manage, owner request
+- admin page: review center
 
-- `JWT_SECRET`
-- `DB_HOST`
-- `DB_PORT`
-- `DB_USER`
-- `DB_PASSWORD`
-- `DB_NAME`
-- `DB_SSL` (optional, defaults to enabled unless explicitly `false`)
+Backend API routes (`src/app/api/**/route.ts`):
 
-Required by S3 object storage:
+- auth and security code APIs
+- user/profile APIs
+- owner/admin moderation APIs
+- booking/payment/checkout APIs
+- media proxy APIs for S3 object access
 
-- `AWS_S3_BUCKET_NAME`
-- `AWS_ENDPOINT_URL`
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_DEFAULT_REGION` (optional, defaults to `auto`)
+Shared libs (`src/lib/*`):
 
-Notes:
+- `db/mysql.ts`: connection pool + timezone setup (`+07:00`)
+- `auth.ts`: hash/verify/token helpers
+- `storage.ts`: upload/delete/get file utilities
+- `booking-checkout.ts`: settlement and automation
+- `wallet.ts`: wallet schema + ledger updates
+- `notifications.ts`: notification schema + CRUD + optional email delivery
+- `security-codes.ts`: one-time code generation/validation
+- location normalization modules (`location-normalization/*`, `translation-api.ts`)
 
-- `docker-compose.yml` uses `.env`
-- local dev commonly uses `.env.local`
-- `.env.example` currently documents JWT/DB values only and does not include AWS variables
+## 5. Auth and Role Model
 
-## 5. Frontend Route Map
+Identity:
 
-Public:
+- JWT bearer token from `/api/auth/login`
+- token payload contains `userId`, `username`, `role`
 
-- `/` homepage with parking list and search
+Persistence:
+
+- client stores `auth_token` and `auth_user` in `localStorage`
+
+Role source:
+
+- `users.roles` MySQL `SET('RENTER','OWNER','ADMIN')`
+- runtime app role is resolved by `resolveAppRole(...)`
+- owner role requires approved owner request + owner profile row
+
+Account status:
+
+- login is blocked unless `users.u_status = 'ACTIVE'`
+- email verification routes move account from inactive to active
+- admin can change user status via `/api/admin/users/[id]/status`
+
+## 6. Frontend Route Map
+
+Public and auth pages:
+
+- `/`
 - `/login`
 - `/register`
-- `/parkingdetail/[id]` parking lot detail + reviews + metadata
+- `/verify-email`
+- `/forgot-password`
+- `/parkingdetail/[id]`
 
-Authenticated user flows:
+Renter pages:
 
-- `/booking/[id]` create booking, then upload payment proof
-- `/booking-history/[id]` booking detail, check-in proof upload, checkout request
-- `/aboutme` profile edit + wallet summary + recent booking history
+- `/booking/[id]`
+- `/booking-history/[id]`
+- `/review/[b_id]`
+- `/aboutme`
+- `/notifications`
 
-Authenticated owner/admin flows:
+Owner pages:
 
-- `/owner/home` owner dashboard, owner request status, parking list, owner booking actions
-- `/owner/parkingspace` create parking-lot request with map pin + metadata
-- `/owner/parkingmanage` manage owner parking lot (edit/toggle/delete)
-- `/admin` admin control center (owner requests, parking-lot requests, payment proofs)
+- `/owner`
+- `/owner/home`
+- `/owner/request`
+- `/owner/parkingspace`
+- `/owner/parkingmanage`
 
-Compatibility:
+Admin page:
 
-- `/user/home` redirects to `/`
+- `/admin`
 
-## 6. API Surface
+Compatibility redirect:
 
-Auth:
+- `/user/home`
 
-- `POST /api/auth/login`
+## 7. API Surface
+
+Auth/security:
+
 - `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/verify-email`
+- `POST /api/auth/resend-verification`
+- `POST /api/auth/forgot-password`
+- `POST /api/auth/reset-password`
+- `POST /api/auth/password-check`
+- `POST /api/auth/sensitive-code`
+- `POST /api/auth/sensitive-code/verify`
 
 User/profile:
 
-- `GET /api/USER/[id]`
-- `PUT /api/USER/[id]`
-- `PATCH /api/USER/[id]` (`REQUEST_OWNER`, `APPROVE_OWNER`, `REJECT_OWNER`)
-- `POST /api/profile-image`
-- `DELETE /api/profile-image`
+- `GET|PUT|PATCH /api/USER/[id]`
+- `POST|DELETE /api/profile-image`
 - `GET /api/profile-image/[...key]`
 
-Parking lots:
+Notifications:
+
+- `GET|PATCH /api/notifications`
+- `PATCH /api/notifications/[id]`
+
+Owner request:
+
+- `GET|POST|DELETE /api/owner-requests`
+- `GET /api/owner-request-evidence/[...key]`
+
+Parking:
 
 - `GET /api/parking-lots`
-- `GET /api/parking-lots/system`
-- `POST /api/parking-lots/system` (owner request to add lot)
-- `GET /api/parking-lots/parkingdetail/[id]` (main detail endpoint used by UI)
-- `GET /api/parking-lots/[id]` (legacy/minimal detail endpoint still present)
-- `GET /api/owner/parking-lots/[id]`
-- `PATCH /api/owner/parking-lots/[id]`
-- `DELETE /api/owner/parking-lots/[id]`
+- `GET|POST /api/parking-lots/system`
+- `GET /api/parking-lots/parkingdetail/[id]`
+- `GET /api/parking-lots/[id]` (legacy/minimal detail route)
+- `GET|PATCH|DELETE /api/owner/parking-lots/[id]`
+- `GET /api/parking-lot-image/[...key]`
+- `GET /api/parking-lot-evidence/[...key]`
 
-Bookings and checkout:
+Booking/payment/review:
 
-- `POST /api/bookings` (create booking in `WAITING_FOR_PAYMENT`)
+- `POST|GET /api/bookings`
 - `GET /api/bookings/[id]`
-- `POST /api/bookings/[id]/checkin` (upload check-in proof)
-- `PATCH /api/bookings/[id]/checkout` (renter requests checkout)
-- `GET /api/owner/bookings`
-- `PATCH /api/owner/bookings/[id]/cancel` (owner/admin cancel + refund)
-- `PATCH /api/owner/bookings/[id]/checkout-review` (owner/admin approve or deny checkout)
-
-Payments:
-
-- `POST /api/payments` (upload payment proof for a booking)
-- `PATCH /api/payments/[id]/review` (admin approve/deny payment)
-- `GET /api/admin/payment-approvals`
+- `PATCH /api/bookings/[id]/cancel`
+- `POST /api/bookings/[id]/checkin`
+- `PATCH|DELETE /api/bookings/[id]/checkout`
+- `POST /api/payments`
+- `PATCH /api/payments/[id]/review`
+- `POST /api/reviews`
 - `GET /api/payment-proof/[...key]`
 - `GET /api/checkin-proof/[...key]`
 
-Admin review boards:
+Owner booking board:
+
+- `GET /api/owner/bookings`
+- `PATCH /api/owner/bookings/[id]/cancel`
+- `PATCH /api/owner/bookings/[id]/checkout-review`
+
+Admin board:
 
 - `GET /api/admin/owner-requests`
 - `GET /api/admin/parking-lot-requests`
 - `PATCH /api/admin/parking-lot-requests/[id]`
+- `GET /api/admin/payment-approvals`
+- `GET /api/admin/users`
+- `PATCH /api/admin/users/[id]/status`
 
-## 7. Core Runtime Flows
+## 8. Core Runtime Flows
 
-### Booking + payment proof
+### 8.1 Register and activate account
 
-1. User opens `/booking/[lotId]`.
-2. Client submits `POST /api/bookings`.
-3. Client uploads proof with `POST /api/payments`.
-4. Booking remains waiting until admin payment review.
+1. User registers (`/api/auth/register`) -> account is inactive.
+2. Verification code sent by Brevo.
+3. `/api/auth/verify-email` validates code and sets `u_status='ACTIVE'`.
 
-### Payment review
+### 8.2 Owner request and approval
 
-1. Admin reads pending proofs via `GET /api/admin/payment-approvals`.
-2. Admin confirms/denies via `PATCH /api/payments/[id]/review`.
-3. On approve: payment becomes `PAID`, booking moves to `PAYMENT_CONFIRMED`.
-4. On deny: payment becomes `FAILED`, booking returns to `WAITING_FOR_PAYMENT`.
+1. User uploads citizen ID evidence via `/api/owner-requests`.
+2. `users.owner_request_status` becomes `PENDING`.
+3. Admin reviews on `/admin` and approves/rejects.
+4. Approval updates status and ensures owner profile data consistency.
 
-### Check-in and checkout
+### 8.3 Parking lot request and moderation
 
-1. Renter uploads check-in proof: `POST /api/bookings/[id]/checkin`.
-2. After end time, renter sends checkout request: `PATCH /api/bookings/[id]/checkout`.
-3. Owner/admin reviews checkout: `PATCH /api/owner/bookings/[id]/checkout-review`.
-4. Settlement credits owner and renter wallets based on policy.
+1. Owner submits lot + images + evidence via `/api/parking-lots/system`.
+2. Lot starts pending (`is_approve=0`).
+3. Admin approves/denies through `/api/admin/parking-lot-requests/[id]`.
 
-### Owner and parking-lot approvals
+### 8.4 Booking and payment
 
-- Owner role request is managed via `PATCH /api/USER/[id]`.
-- Parking-lot approval/denial is managed via admin request APIs.
+1. Renter creates booking (`WAITING_FOR_PAYMENT`).
+2. Renter uploads payment proof (`/api/payments`).
+3. Admin reviews payment (`/api/payments/[id]/review`):
+   - approve -> booking confirmed
+   - deny -> payment failed, booking cancelled
 
-## 8. Auth and Access Model
+### 8.5 Check-in and checkout settlement
 
-- JWT issued in login route
-- token + user payload stored in browser `localStorage`
-- protected API routes use `Authorization: Bearer <token>`
-- most page guards are client-side checks + API authorization
-- role resolution still uses `users.roles` with owner-profile/request-state fallback logic
+1. Renter uploads check-in proof (`/api/bookings/[id]/checkin`).
+2. Renter submits checkout (`/api/bookings/[id]/checkout`).
+3. Owner/admin reviews checkout (`/api/owner/bookings/[id]/checkout-review`).
+4. Settlement writes `booking_checkout_settlements` and wallet ledger entries.
 
-## 9. Data and Table Usage
+### 8.6 Cancellations and refunds
 
-Core existing tables used:
+- renter cancellation: policy checks (before payment confirmation, or time windows) and optional refund to wallet
+- owner/admin cancellation: immediate refund if paid; pending payments stay for admin review decision
 
-- `users`
-- `owner_profiles`
-- `parking_lots`
-- `bookings`
-- `payments`
-- `reviews`
+## 9. Data Architecture
 
-Runtime-created support tables (created by API/lib code if missing):
+Canonical schema artifacts:
+
+- machine-readable schema: `db.json`
+- human-readable table guide: `db.md`
+
+Base tables:
+
+- `users`, `owner_profiles`, `parking_lots`, `bookings`, `payments`, `reviews`
+
+Support tables (runtime-created if needed):
 
 - `payment_proofs`
-- `parking_lot_metadata`
 - `booking_vehicle_metadata`
+- `parking_lot_metadata`
+- `owner_request_metadata`
 - `wallets`
 - `wallet_transactions`
 - `booking_checkout_settlements`
+- `user_notifications`
+- `user_security_codes`
 
-This means some schema pieces are provisioned lazily by route execution, not only by manual migrations.
+## 10. Operational Behavior
 
-## 10. State Machines (Important)
+- DB session timezone is forced to Bangkok (`+07:00`).
+- Checkout automation is request-driven (no dedicated cron worker):
+  - auto-cancel unpaid bookings
+  - auto-close no-checkin bookings
+  - auto-approve stale checkout reviews
+- S3 files are not served directly; APIs proxy by object key routes.
 
-Booking statuses seen in code include:
+## 11. Key Risks / Constraints
 
-- `WAITING_FOR_PAYMENT`
-- `PAYMENT_CONFIRMED`
-- `CHECKING_IN`
-- `CHECKIN_APPROVED`
-- `CHECKIN_REJECTED`
-- `CHECKING_OUT`
-- `CHECKOUT_APPROVED`
-- `CHECKOUT_REJECTED`
-- `CANCELLED`
-
-Payment statuses seen in code include:
-
-- `PENDING`
-- `PAID`
-- `FAILED`
-- `REFUNDED`
-
-Parking-lot review states (admin board mapping):
-
-- `REQUEST` (pending)
-- `APPROVED`
-- `DENIED`
-
-## 11. Automation Behavior
-
-Checkout automation runs from request paths (not from a scheduler service):
-
-- `runBookingCheckoutAutomation()` is triggered inside key GET handlers
-- auto-handled paths include:
-  - auto-checkout when no check-in proof exists and time has passed
-  - auto-approval after owner review timeout window
-
-Operational implication: automation executes when traffic hits those endpoints.
-
-## 12. Key Paths
-
-- `src/app/*`: pages
-- `src/app/api/*`: route handlers
-- `src/lib/booking-checkout.ts`: settlement and auto-checkout logic
-- `src/lib/wallet.ts`: wallet table/bootstrap helpers
-- `src/lib/parking-lots.ts`: list/detail queries and owner-income aggregation
-- `src/lib/storage.ts`: S3 object upload/get/delete for profile/payment/check-in proofs
-- `src/components/MapCoordinatePicker.tsx`: Leaflet map pin picker
-
-Legacy/reference files still present:
-
-- `lib/db.js` (legacy DB helper)
-- `src/lib/db/prisma.ts` (template/reference, not runtime path)
-
+- Because automation is request-triggered, low traffic can delay scheduled-like actions.
+- Role resolution depends on both `users.roles` and owner profile/request state.
+- Upload-heavy endpoints require stable S3 credentials and bucket permissions.
+- Security-code flows depend on Brevo delivery and cooldown windows.

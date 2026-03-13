@@ -38,7 +38,7 @@ const occupiedBookingStatuses = [
   'CHECKING_OUT',
   'CHECKOUT_REJECTED',
 ] as const;
-const MIN_CHECKIN_LEAD_TIME_MS = 15 * 60 * 1000;
+const MIN_CHECKIN_LEAD_TIME_MS = 5 * 60 * 1000;
 
 function getCurrentMinuteEpoch(): number {
   return Math.floor(Date.now() / 60000) * 60000;
@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
     const minimumCheckinEpoch = getCurrentMinuteEpoch() + MIN_CHECKIN_LEAD_TIME_MS;
     if (checkinDateTime.comparableTime < minimumCheckinEpoch) {
       return NextResponse.json(
-        { error: 'Check-in time must be at least 15 minutes from current time' },
+        { error: 'Check-in time must be at least 5 minutes from current time' },
         { status: 400 }
       );
     }

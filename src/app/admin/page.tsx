@@ -204,6 +204,9 @@ function getParkingStatusClassName(status: ParkingLotRequestStatus): string {
   return 'bg-amber-100 text-amber-800';
 }
 
+const ADMIN_REFRESH_BUTTON_CLASS =
+  'rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70';
+
 export default function AdminHomePage() {
   const router = useRouter();
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -855,7 +858,7 @@ export default function AdminHomePage() {
                   void loadOwnerRequests();
                 }}
                 disabled={isOwnerLoading}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                className={ADMIN_REFRESH_BUTTON_CLASS}
               >
                 {isOwnerLoading ? 'Refreshing...' : 'Refresh'}
               </button>
@@ -972,7 +975,7 @@ export default function AdminHomePage() {
                   void loadParkingLotRequests();
                 }}
                 disabled={isParkingLoading}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                className={ADMIN_REFRESH_BUTTON_CLASS}
               >
                 {isParkingLoading ? 'Refreshing...' : 'Refresh'}
               </button>
@@ -1084,7 +1087,7 @@ export default function AdminHomePage() {
                   void loadPaymentApprovals();
                 }}
                 disabled={isPaymentLoading}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                className={ADMIN_REFRESH_BUTTON_CLASS}
               >
                 {isPaymentLoading ? 'Refreshing...' : 'Refresh'}
               </button>
@@ -1247,7 +1250,7 @@ export default function AdminHomePage() {
                   type="button"
                   onClick={() => void loadBookings()}
                   disabled={isBookingLoading}
-                  className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-70"
+                  className={ADMIN_REFRESH_BUTTON_CLASS}
                 >
                   {isBookingLoading ? 'Loading...' : 'Refresh'}
                 </button>
@@ -1327,7 +1330,7 @@ export default function AdminHomePage() {
                   type="button"
                   onClick={() => void loadUsersList()}
                   disabled={isUserLoading}
-                  className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-70"
+                  className={ADMIN_REFRESH_BUTTON_CLASS}
                 >
                   {isUserLoading ? 'Loading...' : 'Refresh'}
                 </button>

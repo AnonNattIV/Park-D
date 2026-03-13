@@ -44,7 +44,7 @@ type BookingCreateResponse = {
 };
 
 type DurationUnit = 'HOUR' | 'DAY' | 'MONTH';
-const MIN_CHECKIN_LEAD_TIME_MS = 15 * 60 * 1000;
+const MIN_CHECKIN_LEAD_TIME_MS = 5 * 60 * 1000;
 
 function getCurrentMinuteEpoch(): number {
   return Math.floor(Date.now() / 60000) * 60000;
@@ -243,7 +243,7 @@ export default function BookingPage() {
 
     const minimumCheckinEpoch = getCurrentMinuteEpoch() + MIN_CHECKIN_LEAD_TIME_MS;
     if (checkin.comparableTime < minimumCheckinEpoch) {
-      setSubmitError('Check-in time must be at least 15 minutes from now');
+      setSubmitError('Check-in time must be at least 5 minutes from now');
       return;
     }
 
